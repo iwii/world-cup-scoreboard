@@ -1,8 +1,37 @@
 # AI Usage Documentation
 
+## Table of Contents
+
+1. [AI Tool Usage Summary](#1-ai-tool-usage-summary)
+2. [Prompt History](#2-prompt-history)
+   - [2.1 Development Environment Setup](#21-development-environment-setup)
+     - [2.1.1 gitignore](#211-gitignore)
+     - [2.1.2 pom.xml template](#212-pomxml-template)
+     - [2.1.3 Using Homebrew Maven in IntelliJ](#213-using-homebrew-maven-in-intellij)
+     - [2.1.4 Trimming the configuration](#214-trimming-the-configuration)
+     - [2.1.5 Automatic-Module-Name](#215-automatic-module-name)
+     - [2.1.6 README.md](#216-readmemd)
+   - [2.2 Requirements Analysis](#22-requirements-analysis)
+     - [2.2.1 Scope and Library Responsibilities](#221-scope-and-library-responsibilities)
+     - [2.2.2 Functional and Non-functional Requirements](#222-functional-and-non-functional-requirements)
+   - [2.3 Design Decisions](#23-design-decisions)
+     - [2.3.1 Domain Model and Immutability](#231-domain-model-and-immutability)
+     - [2.3.2 Match Identification and Storage](#232-match-identification-and-storage)
+     - [2.3.3 Match Lifecycle and Finished Matches](#233-match-lifecycle-and-finished-matches)
+     - [2.3.4 Public API and Error Handling](#234-public-api-and-error-handling)
+     - [2.3.5 Concurrency, Summary Ordering and Performance](#235-concurrency-summary-ordering-and-performance)
+   - [2.4 Implementation](#24-implementation)
+   - [2.5 Testing](#25-testing)
+     - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
+   - [2.6 Code Review and Refactoring](#26-code-review-and-refactoring)
+   - [2.7 Documentation Review](#27-documentation-review)
+3. [Human Review and Validation](#3-human-review-and-validation)
+
 ## 1. AI Tool Usage Summary
 
-AI (Claude) was used as a supporting tool for:
+Tool: Claude (Anthropic), used through the chat interface, model/version: Sonnet 5.5 Medium and ChatGPT version 6.
+
+AI was used as a supporting tool for:
 - Development environment and build setup (.gitignore, pom.xml, Maven in IntelliJ)
 - Requirements analysis
 - Design and architectural discussions
@@ -11,38 +40,42 @@ AI (Claude) was used as a supporting tool for:
 - Code review and refactoring suggestions
 - Documentation (README.md, AI.md)
 
-Prompts are listed in English translation. All generated suggestions were reviewed and validated before being incorporated into the project.
+Prompts are listed in English translation. In sections 2.2 and 2.3 the prompts are consolidated: several related exchanges are merged into one entry. Each entry lists the prompt, its context and the outcome, including what I changed or rejected. The rationale for the final design is in the README.
 
 ## 2. Prompt History
 
 ### 2.1 Development Environment Setup
 
 #### 2.1.1 gitignore
+
 **Prompt:** What should be included in the .gitignore file for a Java Maven project developed using IntelliJ IDEA on macOS?
 
-**Context:** The project is a Java library developed using Maven. IntelliJ IDEA is used as the IDE, and macOS is the development operating system.
+**Context:** Java library built with Maven; IntelliJ IDEA on macOS.
 
-**Outcome:** I used the proposed .gitignore for IntelliJ IDEA, Maven, compiled artifacts, logs and macOS files. I removed all Maven Wrapper entries because I build with my own Maven installation, and I kept the plugin-specific entries (release, versions, shade, buildnumber) as a harmless precaution.
+**Outcome:** I used the proposed .gitignore for IntelliJ IDEA, Maven, compiled artifacts, logs and macOS files. I removed all Maven Wrapper entries because I build with my own Maven installation, and kept the plugin-specific entries (release, versions, shade, buildnumber) as a harmless precaution.
 
 #### 2.1.2 pom.xml template
+
 **Prompt:** Prepare pom.xml template with the newest artifact for JUnit asserts, code coverage.
 
-**Context:** Java 21, Maven. Versions were checked online: JUnit 6.1.2 (latest stable at the time) and JaCoCo 0.8.15 (newest version found). Versions of maven-compiler-plugin, maven-surefire-plugin and maven-jar-plugin come from model knowledge and were not verified.
+**Context:** Java 21, Maven. Versions checked online: JUnit 6.1.2 (latest stable at the time) and JaCoCo 0.8.15 (newest found). Versions of maven-compiler-plugin, maven-surefire-plugin and maven-jar-plugin came from model knowledge and were not verified.
 
 **Outcome:** I used the proposed pom.xml as the base:
-- Java 21 via maven.compiler.release and UTF-8 encoding
-- JUnit 6.1.2 through junit-bom and the junit-jupiter aggregator (its built-in assertions are enough), and JaCoCo 0.8.15 with a report and an 80% line coverage check in the verify phase.
-- maven-compiler-plugin, maven-surefire-plugin and maven-jar-plugin with versions pinned in properties
-- left junit-platform-launcher commented out until `mvn clean verify` shows whether it is needed.
+- Java 21 via `maven.compiler.release`, UTF-8 encoding.
+- JUnit 6.1.2 through `junit-bom` and the `junit-jupiter` aggregator (built-in assertions are enough).
+- JaCoCo 0.8.15 with a report and an 80% line coverage check in the `verify` phase.
+- Compiler, surefire and jar plugin versions pinned in properties.
+- `junit-platform-launcher` left commented out until `mvn clean verify` shows whether it is needed.
 
-- The plugin versions were not verified online, so I will check them with `mvn versions:display-plugin-updates`.
+Open item: verify the plugin versions with `mvn versions:display-plugin-updates`.
 
 #### 2.1.3 Using Homebrew Maven in IntelliJ
+
 **Prompt:** How to check whether IntelliJ uses Maven installed via Homebrew, and how to set it.
 
-**Context:** IntelliJ offered only Bundled Maven (3.9.16) and the Maven Wrapper in the Maven home path list, while the terminal used Maven 3.10.0.
+**Context:** IntelliJ offered only Bundled Maven (3.9.16) and the Maven Wrapper, while the terminal used Maven 3.10.0.
 
-**Outcome:** IntelliJ offered only the bundled Maven and the Wrapper, so I set the Maven home path manually to the Homebrew installation (libexec directory). The IDE now builds with the same Maven version (3.10.0) as the terminal.
+**Outcome:** I set the Maven home path manually to the Homebrew installation (libexec directory), so the IDE and the terminal build with the same Maven version (3.10.0).
 
 #### 2.1.4 Trimming the configuration
 
@@ -50,169 +83,170 @@ Prompts are listed in English translation. All generated suggestions were review
 
 **Context:** A slimmed-down pom.xml was proposed after the decision not to use the Maven Wrapper. The check execution and maven-jar-plugin were dropped on the assumption they were optional.
 
-**Outcome:** The slimmed-down pom.xml had dropped the JaCoCo check and maven-jar-plugin without my decision, so I restored both: the check enforces the 80% coverage threshold in `mvn verify`, and maven-jar-plugin keeps the plugin version pinned for reproducible builds.
+**Outcome:** The AI had dropped both without my decision, so I restored them: the check enforces the 80% coverage threshold in `mvn verify`, and maven-jar-plugin keeps its version pinned for reproducible builds.
 
 #### 2.1.5 Automatic-Module-Name
 
 **Prompt:** How is the JAR name determined in a Maven project, and how can I make the module name stable when using maven-jar-plugin?
 
-**Context:** The library has no module-info.java and may be consumed by others. Without the manifest entry, the module name is derived from the JAR file name (artifactId and version), so it can change between versions.
+**Context:** The library has no module-info.java and may be consumed by others. Without a manifest entry the module name is derived from the JAR file name, so it can change between versions.
 
-**Outcome:** I chose Automatic-Module-Name in the JAR manifest (via maven-jar-plugin) instead of a full module-info.java, because it is simpler and enough for a small library. I replaced the placeholder from the template with `com.sportradar.worldcup.scoreboard` to match the main package, and I check the result with `jar --describe-module`.
+**Outcome:** I chose `Automatic-Module-Name` in the JAR manifest (via maven-jar-plugin) instead of a full module-info.java: simpler and enough for a small library. I replaced the template placeholder with `com.sportradar.worldcup.scoreboard`, matching the main package, and check the result with `jar --describe-module`.
 
 #### 2.1.6 README.md
 
 **Prompt:** Prepare a README file with assumptions, reasoning and trade-offs now.
 
-**Context:** The project requires a README describing assumptions, reasoning and trade-offs. The implementation has not started yet, but the build setup decisions (Java 21, Maven without Wrapper, JUnit, JaCoCo, Automatic-Module-Name) are already made.
+**Context:** The README is required. Implementation had not started, but the build decisions (Java 21, Maven without Wrapper, JUnit, JaCoCo, Automatic-Module-Name) were already made.
 
-**Outcome:** I created a README skeleton with Assumptions, Reasoning and Trade-offs, pre-filled with the build decisions already made (no runtime dependencies, JUnit, JaCoCo threshold, Automatic-Module-Name, no Wrapper). I will fill in the domain assumptions, API reasoning and implementation trade-offs after the implementation.
-
-The proposed configuration was reviewed and adapted to the project requirements.
+**Outcome:** I created a README skeleton with assumptions, reasoning and trade-offs, pre-filled with the build decisions. Domain assumptions, API reasoning and implementation trade-offs were added after the design work (see 2.7).
 
 ### 2.2 Requirements Analysis
 
-#### 2.2.1 Understanding Real-world Sports Data Systems
-**Prompt:** I am working on a Java library that manages a live Football World Cup scoreboard. Before designing it, I want to understand how live football data is handled in real-world sports data platforms, such as those serving sports betting services and live score applications. Please explain:
-- What are the typical sources of live match data, and can several independent providers report the same match?
-- How are events such as goals, red cards and match status changes communicated (push, polling, event streams)?
-- How do systems ensure that the displayed information is accurate and up to date?
-- What challenges arise when processing live sports data?
+#### 2.2.1 Scope and Library Responsibilities
 
-**Context:** The assignment is to implement a simple Java 21 Maven library that manages a live Football World Cup scoreboard. It must support multiple simultaneous matches and provide operations for starting matches, updating scores, finishing matches and retrieving a summary. The assignment intentionally leaves some design decisions open, so the goal is to understand the domain before designing a simplified library.
+**Prompt:** Define the responsibilities and boundaries of a standalone, in-memory Football World Cup Scoreboard library. Identify which concerns belong to the library and which should remain outside its scope.
 
-**Outcome:** Summarized the key findings about live sports data systems and the typical flow of match information, used as background for the scope decisions.
+**Context:** The assignment requires a Java library with operations to start matches, update scores, finish matches and retrieve a summary of ongoing matches, working independently without external services or persistent storage.
 
-#### 2.2.2 Concurrent Updates and Data Consistency
-**Prompt:** Based on how real-world sports data platforms operate, explain how they typically handle the following scenarios:
-1. Two independent providers report the same goal, and due to network latency the notification reaches the scoreboard twice, almost simultaneously.
-2. A goal is reported, but a few seconds later it is disallowed by VAR and the score must be corrected.
-3. Two providers report different scores for the same match because of differences in update timing.
-4. A "match finished" update arrives before an earlier score update.
+**Outcome:** I defined the library as a standalone component that manages only the current in-memory scoreboard state. The public API exposes the match operations and the necessary domain types; storage, synchronization and validation stay internal.
 
-Please cover duplicate detection and idempotency, event ordering and delayed messages, conflict resolution between providers, data consistency, and score corrections with match status transitions. Finally, distinguish mechanisms used in production distributed systems from those relevant to a simple in-memory Java library.
+Out of scope: persistence, external integrations, event processing and provider-level concerns (duplicate event detection, event ordering, conflict resolution between providers). The design targets a single-JVM library, not a production sports data platform.
 
-**Context:** The project is a simplified scoreboard library, not a distributed sports data processing platform. The goal is to understand real-world challenges before deciding which of them should influence the library design.
+#### 2.2.2 Functional and Non-functional Requirements
 
-**Outcome:** Summarized the production-level challenges and typical approaches, and identified which concerns stay out of scope (providers, event ordering, conflict resolution) and which influence the design (absolute score updates for corrections, thread safety within a single JVM).
+**Prompt:** Identify the functional and non-functional requirements, including relevant edge cases and assumptions, for the Football World Cup Scoreboard library.
 
-#### 2.2.3 Library Responsibilities and Scope
-**Prompt:** Analyze the responsibilities and boundaries of the Football World Cup Scoreboard library. Which features belong in the library and which stay outside (persistence, external data sources and APIs, event processing)? Which implementation details should stay internal and which belong in the public API? Which future extensions are worth noting without implementing them now? Distinguish requirements of a small reusable library from concerns of a production sports data platform.
+**Context:** The assignment specifies the core operations but leaves some edge cases open to interpretation.
 
-**Context:** The project is a standalone in-memory Java 21 Maven library supporting starting matches, updating scores, finishing matches and retrieving a summary of ongoing matches. It should stay simple, maintainable and independent of external infrastructure.
-
-**Outcome:** Documented the responsibilities, boundaries and assumptions of the library, including features intentionally excluded from the initial implementation.
-
-#### 2.2.4 Functional and Non-functional Requirements and Edge Cases
-**Prompt:** Translate the Football World Cup Scoreboard assignment into explicit functional and non-functional requirements and identify edge cases to consider. Cover starting and identifying matches, updating scores, finishing matches, retrieving and sorting summaries, invalid input (null or blank names, identical teams, negative or overflowing scores, name normalization such as surrounding whitespace and letter case), operations on non-existent matches, invalid state transitions, a team taking part in two ongoing matches at once, home/away order, multiple simultaneous matches, thread safety, and consistent summaries during concurrent modifications.
-
-For each case: explain the potential problem, recommend the expected behavior, indicate whether it belongs in this assignment or is out of scope, and avoid requirements that are unnecessary for a simple in-memory library.
-
-**Context:** The required operations are:
-1. Start a new match.
-2. Update the score.
-3. Finish a match.
-4. Get a summary of matches in progress, ordered by total score (descending) and, for equal totals, by the most recently started match first.
-
-The implementation uses Java 21 and Maven.
-
-**Outcome:** Documented the functional and non-functional requirements, the identified edge cases and the final scope of the library.
+**Outcome:** The full list of assumptions is in the README. The additions I made to the assignment text:
+- Validation: team names not null or blank after trimming, original spelling preserved, home and away teams different (ignoring case), no negative scores.
+- Score updates use absolute values, so corrections are possible.
+- Finishing a match removes it from the scoreboard; later operations on its ID are rejected as unknown (see 2.3.3).
+- A team may take part in several ongoing matches, and the same teams may meet again, so team names cannot identify a match.
+- Non-functional: in-memory, single JVM, thread-safe public operations, immutable result objects, encapsulated internals.
+- Scores are `int`; the total used for ordering is `long` to avoid overflow. No maximum score is imposed because the assignment defines none.
 
 ### 2.3 Design Decisions
 
-#### 2.3.1 Domain Model and Object Design
-**Prompt:** Propose a domain model for the Football World Cup Scoreboard library. Which concepts (Scoreboard, Match, Score, Team, MatchStatus) should be classes, records or enums in Java 21? How should responsibilities be split between the domain objects and the scoreboard? How should encapsulation prevent clients from modifying internal match state, and should immutable snapshots be exposed? Suggest a class structure and avoid unnecessary abstractions.
+The design was explored with AI assistance and some topics were revisited as the requirements became clearer. Each entry below consolidates the final decisions.
 
-**Context:** The library is an in-memory Java 21 Maven project supporting multiple simultaneous matches, score updates, match completion and summary retrieval. The design should be easy to test and maintain, with complexity proportional to the assignment.
+#### 2.3.1 Domain Model and Immutability
 
-**Outcome:** Documented the domain model, class responsibilities and object design decisions used in the implementation.
+**Prompt:** Propose a minimal domain model for the scoreboard. Evaluate the use of classes and records, the responsibilities of each component, and the benefits and trade-offs of an immutable domain model.
+
+**Context:** The library manages multiple matches and their scores. The design should preserve encapsulation, avoid unnecessary abstractions and support thread-safe operations.
+
+**Outcome:** I chose a minimal model:
+- `Scoreboard` coordinates the operations, guards access and produces the summary.
+- `Match` is an immutable class holding the match state; `withScore()` returns a new instance.
+- `MatchId` (wraps a UUID), `Team` (validates and stores the name) and `MatchSummary` (returned by the public API) are immutable records.
+
+The scoreboard keeps a private mutable `HashMap<MatchId, Match>` and replaces the stored instance on every change, so the collection is mutable but the domain objects are not. `Team` keeps the default `equals()`/`hashCode()` because teams are never used as keys; the home/away check uses `equalsIgnoreCase()` explicitly.
+
+**Rejected:** a separate `Score` type (an extra abstraction without enough value) and conventional getters/setters.
 
 #### 2.3.2 Match Identification and Storage
-**Prompt:** Evaluate how matches should be uniquely identified and stored. Are team names sufficient, or should a unique identifier such as a UUID be used? How should multiple matches involving the same teams be supported, which data structure fits best, and how should duplicate registration (including the same team in two ongoing matches) be handled?
 
-**Context:** The library operates entirely in memory and supports multiple simultaneous matches. The same teams may meet more than once over time, so identification must not rely solely on team names.
+**Prompt:** Evaluate how matches should be identified and stored. Compare team-based identifiers, composite keys and generated unique identifiers, considering multiple matches involving the same teams.
 
-**Outcome:** Documented the selected match identification strategy, storage structure and duplicate registration policy.
+**Context:** The scoreboard must support multiple simultaneous matches; the same team may play several matches and the same two teams may meet more than once. No integration with external match providers is required.
 
-#### 2.3.3 Match Lifecycle and State Management
-**Prompt:** Determine how the match lifecycle should be represented. Which states and transitions are allowed? Should score updates be possible only while a match is in progress? Should finished matches remain stored? How should score corrections, including reductions, be supported, and which component enforces the lifecycle rules?
+**Outcome:** I chose a `MatchId` generated by `Scoreboard.startMatch()` with `UUID.randomUUID()`; clients use the returned ID in later operations. Matches are stored in a `HashMap<MatchId, Match>` (average O(1) lookup and insertion), and `startMatch()` must never overwrite an existing entry. Match identity is independent of team names.
 
-**Context:** A match is created when it starts and can then be updated or finished. The summary contains only ongoing matches. Score updates use absolute values rather than increments, which allows corrections such as VAR decisions.
+**Rejected:** team-based IDs and composite keys (ambiguous for repeated pairings) and client-supplied IDs (relevant only with external providers, which are out of scope).
 
-**Outcome:** Documented the selected lifecycle model, allowed state transitions and score update policy.
+#### 2.3.3 Match Lifecycle and Finished Matches
+
+**Prompt:** Define the match lifecycle and determine how score updates and finished matches should be handled in an immutable domain model.
+
+**Context:** A match starts as ongoing, can be updated and is eventually finished. The assignment requires a summary of ongoing matches but does not say how finished matches are stored or how later operations behave.
+
+**Follow-up prompt:** How would you solve this case: finished matches are never removed from the map, so memory grows over time?
+
+**Outcome:** My first design kept finished matches in the map with a `FINISHED` status, which allowed clear errors on repeated operations but made memory grow without bound. I replaced it: `finishMatch` removes the match from the map and returns its final `MatchSummary`. Every later operation on that ID throws `MatchNotFoundException`. The map therefore holds only ongoing matches, there is no status enum and no lifecycle state machine, and the summary only sorts. Score updates use absolute values (so VAR corrections can lower a score) and reject negative values. Updates that arrive after the match is finished are rejected too; handling late events is the caller's responsibility (see 2.2.1).
+
+**Rejected:** keeping finished matches with a status, expiry by TTL or size limit (needs a clock and configuration without a requirement), a set of finished IDs (still grows), a separate archive (history is out of scope, see 2.2.1), and accepting corrections after a match is finished (requires keeping finished matches).
 
 #### 2.3.4 Public API and Error Handling
-**Prompt:** Propose a minimal public API for the four required operations, with method names, parameters and return types. How should matches be identified by the caller? How should invalid input (null or blank names, identical teams, negative scores), a missing match and invalid state (modifying a finished match) be reported? When should standard Java exceptions be used instead of custom ones, and should the API expose immutable snapshots or Optional values? Provide example signatures and reasoning.
 
-**Context:** The project is a reusable in-memory Java 21 Maven library. The API should clearly distinguish invalid input, invalid match state and missing matches without unnecessary complexity.
+**Prompt:** Design a simple public API for the scoreboard. Determine what each operation should return, how clients should access match information and how invalid operations should be reported.
 
-**Outcome:** Documented the public API, method contracts and error-handling strategy adopted in the implementation.
+**Context:** The library must expose the required operations without exposing internal storage or mutable state. The design uses immutable domain objects and internally generated IDs.
 
-#### 2.3.5 Thread Safety and Concurrent Access
-**Prompt:** Evaluate how thread safety should be ensured when multiple threads use the scoreboard. What race conditions can occur during match creation, score updates and completion? Are synchronized methods sufficient, or are thread-safe collections or more advanced mechanisms justified? How can summary retrieval return a consistent snapshot, and how can clients be prevented from modifying internal state? Distinguish thread safety within a single JVM from distributed concurrency across application instances.
+**Outcome:** All lifecycle operations return a `MatchSummary` (ID, teams, scores) instead of `void`, so clients get the resulting state without another call:
+- `startMatch()` returns the new match with its generated `MatchId`.
+- `updateScore()` returns the updated match.
+- `finishMatch()` returns the final result and removes the match from the scoreboard.
+- `getSummary()` returns an immutable list of ongoing matches (empty when there are none).
 
-**Context:** The library is an in-memory Java 21 implementation running within a single JVM. It should support concurrent access while keeping the implementation simple.
+Errors are unchecked exceptions deriving from `ScoreboardException`: `MatchNotFoundException` (unknown or already finished ID), `InvalidTeamException` (blank name, identical teams) and `InvalidScoreException` (e.g. negative score). Clients can catch the base type or a specific one. `NullPointerException` is kept for null arguments.
 
-**Outcome:** Documented the selected synchronization strategy, consistency guarantees and limitations.
+**Rejected:** exposing `Match` objects, returning `void` or missing values to signal errors, and a custom exception for every null input.
 
-#### 2.3.6 Summary Ordering and Deterministic Results
-**Prompt:** Determine how ongoing matches should be ordered in the summary. Is a timestamp alone enough to guarantee deterministic ordering for matches started within a very short interval, or should a monotonically increasing sequence number be used as a tie-breaker? How should finished matches be excluded?
+#### 2.3.5 Concurrency, Summary Ordering and Performance
 
-**Context:** Matches are sorted by total score (descending), and for equal totals the most recently started match comes first. Results must be deterministic.
+**Prompt:** Evaluate how to ensure thread-safe access to the scoreboard and deterministic summary ordering. Compare synchronization and collection alternatives, and assess the performance implications of sorting matches when the summary is requested.
 
-**Outcome:** Documented the sorting criteria and the mechanism used to guarantee deterministic ordering.
+**Context:** In-memory, single JVM, possibly accessed by multiple threads. Scores change over time, which affects ordering. Unnecessary concurrency and performance optimizations should be avoided.
 
-#### 2.3.7 Performance and Scalability Considerations
-**Prompt:** Analyze the performance characteristics relevant to the library: the cost of starting, updating and finishing a match, the cost of building a sorted summary, likely bottlenecks as the number of simultaneous matches grows, and which optimizations are reasonable and which would be premature. Distinguish the needs of an in-memory library from those of a distributed production system.
+**Outcome:** A single shared `synchronized` monitor protects all public operations, so each operation is atomic and the summary is a consistent snapshot. The summary is built on request by sorting the matches on the scoreboard by total score descending. Ties are broken by a monotonically increasing `long` sequence number assigned in the synchronized `startMatch()`; it is internal and not exposed. Complexity: O(1) average lookup and insertion, O(n log n) sorting per summary.
 
-**Context:** The library runs within a single JVM, and the implementation should prioritize correctness, readability and maintainability over optimizing for an unspecified workload.
-
-**Outcome:** Documented the expected performance characteristics, selected data structures, limitations and optimization decisions.
-
-#### 2.3.8 Additional Feature Selection
-**Prompt:** Evaluate possible additional features beyond the mandatory requirements, for example retrieving a match by its identifier, filtering ongoing matches by team name, tracking score change history, and providing match statistics or metadata. For each, evaluate usefulness, fit with the domain, implementation complexity, impact on the API and model, testability and risk of unnecessary complexity. Recommend one feature that is small, independently testable and appropriate for the scope, and explain why it is preferable to the alternatives.
-
-**Context:** The assignment requires one additional feature, clearly separated from the mandatory functionality and introduced in a dedicated Git commit.
-
-**Outcome:** Documented the evaluated features, the selected feature and the reasoning behind the decision.
-
-#### 2.3.9 Additional Feature Design
-**Prompt:** Define the design of the selected feature: its purpose and expected behavior, public API and parameters, interaction with existing domain objects and scoreboard operations, input validation and error scenarios, thread-safety considerations, the unit tests required, and how to keep it independent of the mandatory functionality.
-
-**Context:** The feature must add meaningful value without changing the core responsibilities of the library or introducing unnecessary complexity.
-
-**Outcome:** Documented the selected feature, its API, integration approach and validation strategy.
+**Rejected:** `ConcurrentHashMap`, `ReadWriteLock` and fine-grained locking (complexity not justified); a continuously ordered `TreeSet` (needs remove and re-insert on every score change); `PriorityQueue` (does not re-order after a score change and cannot be iterated in order); cached summaries (premature without evidence of a performance problem).
 
 ### 2.4 Implementation
 
-...
+_To be completed after the implementation._
 
 ### 2.5 Testing
 
 #### 2.5.1 Test Scenarios and Validation Strategy
 
-**Prompt:** Based on the requirements and the proposed API, identify unit and concurrency test scenarios for the scoreboard. Cover normal operation, input validation, invalid lifecycle transitions, missing matches, summary sorting including tied totals, an empty scoreboard, summary snapshots not being affected by later changes, concurrent score updates, concurrent attempts to start or finish the same match, and concurrent summary retrieval during updates. For each scenario describe the expected result and recommend a testing approach using JUnit Jupiter and Java 21 without unnecessary dependencies, including how to make concurrency tests deterministic (for example ExecutorService with CountDownLatch).
+**Prompt:** Based on the requirements and the proposed API, identify unit and concurrency test scenarios for the scoreboard. Cover:
 
-**Context:** The library is an in-memory Java 21 Maven project that should be simple, thread-safe and independently testable.
+1. Normal operation: starting a match, updating its score and finishing it.
+2. Input validation: null or blank team names, identical home and away teams, negative scores and null arguments.
+3. Invalid lifecycle transitions: updating a finished match and finishing it more than once.
+4. Missing matches: operations using an unknown `MatchId`.
+5. Summary behavior: sorting by total score, tie-breaking by start order, empty scoreboard and exclusion of finished matches.
+6. Immutability: verify that returned summary lists and previously retrieved snapshots are not affected by subsequent scoreboard changes.
+7. Concurrent operations: simultaneous match creation (including matches involving the same teams), concurrent score updates and concurrent attempts to finish the same match.
+8. Concurrent summary retrieval while other threads update matches.
 
-**Outcome:** Documented the test scenarios and the testing strategy used to validate the implementation.
+For each scenario, describe the expected result and recommend a testing approach using JUnit Jupiter and Java 21 without unnecessary dependencies. Explain how to coordinate concurrent tests deterministically, for example with `ExecutorService`, `CountDownLatch` and appropriate timeouts. Distinguish between guaranteed outcomes and results that depend on the order in which concurrent operations acquire the synchronization monitor.
+
+**Context:** In-memory Java 21 Maven project with immutable domain objects, a private `HashMap`, internally generated match IDs and a shared `synchronized` monitor.
+
+**Outcome:** The strategy covers the eight scenario groups above. Decisions:
+- JUnit Jupiter and the Java 21 concurrency utilities only, no extra test dependencies.
+- Concurrent tests use `ExecutorService` and `CountDownLatch` for a simultaneous start, with timeouts so that a failing test cannot hang.
+- Tests assert guarantees (unique IDs, exactly one successful finish, consistent snapshots) and do not assume a thread scheduling order.
+- Tests check observable API behavior, not internals.
+- After a match is finished, updating or finishing it again is expected to fail with `MatchNotFoundException`; in concurrent finish attempts exactly one call succeeds and the others get `MatchNotFoundException`.
+- Prompt items 3 and 5 were written before the decision to remove finished matches (see 2.3.3); in the final design they become "MatchNotFoundException on a finished match" and "a finished match is no longer in the summary".
+
+Results are verified with `mvn clean verify`.
 
 ### 2.6 Code Review and Refactoring
 
-...
+_To be completed after the implementation._
 
-## 3. Additional Context and Artifacts
+### 2.7 Documentation Review
 
-- Original assignment requirements
-- Design notes
-- Relevant technical documentation
-- Other references used during implementation
+**Prompt:** Check the simplicity and correctness of the README and AI.md for a senior Java developer audience, whether they are over-engineered, and whether anything is missing.
 
-## 4. Human Review and Validation
+**Context:** README and AI.md drafts written before the implementation.
 
-AI-generated suggestions were reviewed, tested and adapted. Examples so far:
-- The Automatic-Module-Name and `<name>` in pom.xml were changed from the template placeholders to match the project (`com.sportradar.worldcup.scoreboard`, `world-cup-scoreboard`).
-- Prompts were revised to remove obvious questions and to add missing edge cases.
-- The JaCoCo coverage check and maven-jar-plugin were kept after review.
+**Outcome:** I applied the suggestions to the README: fixed the links, removed duplicated points, split "Reasoning" into build and design decisions, and added the missing assumptions (0-0 start, home and away teams must differ) and the ordering rule. I also added a trade-off for allowing a team in several simultaneous matches, and postponed the usage example until the API exists. In AI.md I normalized the headings, shortened the outcomes to decisions and rejected alternatives, and marked unfinished sections explicitly. I also replaced keeping finished matches in memory with removal on finish and documented how late updates are handled (see 2.3.3).
 
-...
+## 3. Human Review and Validation
+
+All AI suggestions were reviewed before being incorporated. Suggestions I changed or corrected so far:
+- Maven Wrapper entries removed (2.1.1).
+- JaCoCo check and maven-jar-plugin restored (2.1.4).
+- Initial design kept finished matches in the map with a status; replaced by removal on finish (2.3.3).
+
+Verification:
+- `mvn clean verify` (tests and 80% line coverage).
+- `jar --describe-module` for the module name.
+- [To be completed after the implementation: tests reviewed by hand, results of the concurrency tests, known limitations.]
