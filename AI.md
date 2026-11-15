@@ -20,6 +20,7 @@
      - [2.3.3 Match Lifecycle and Finished Matches](#233-match-lifecycle-and-finished-matches)
      - [2.3.4 Public API and Error Handling](#234-public-api-and-error-handling)
      - [2.3.5 Concurrency, Summary Ordering and Performance](#235-concurrency-summary-ordering-and-performance)
+     - [2.3.6 Simplification and Architectural Pivot](#235-concurrency-summary-ordering-and-performance)
    - [2.4 Implementation](#24-implementation)
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
@@ -194,10 +195,89 @@ Errors are unchecked exceptions deriving from `ScoreboardException`: `MatchNotFo
 
 **Rejected:** `ConcurrentHashMap`, `ReadWriteLock` and fine-grained locking (complexity not justified); a continuously ordered `TreeSet` (needs remove and re-insert on every score change); `PriorityQueue` (does not re-order after a score change and cannot be iterated in order); cached summaries (premature without evidence of a performance problem).
 
+#### 2.3.6 Simplification and Architectural Pivot
+
+**Prompt:** Evaluate the transition from an over-engineered multi-source, delayed-update model to a streamlined, rock-solid core tailored strictly for the Sportradar standard assessment. Assess the shift from a globally synchronized `HashMap` to `ConcurrentHashMap` with per-match locking.
+
+**Context:** Initial designs explored advanced features like multi-source priority merging (VAR vs. official API), out-of-order grace periods, and post-match retention windows. While robust for distributed data streaming, these add unnecessary complexity, background execution, and state management overhead for a single-JVM in-memory scoreboard library.
+
+Based on the transition from Part I to Part II, please evaluate this simplified architecture. Does it form a clean, thread-safe, and idiomatic Java 21 foundation, and are there any edge cases (such as race conditions between `finishMatch` and `updateScore`, or how `matchId` / team uniqueness is handled) that I should refine before writing the code?
+
+**Outcome:** I decided to store matches in a ConcurrentHashMap, with each MatchContext owning a dedicated ReentrantLock. The change from the previously considered HashMap follows from adopting a different synchronization model: instead of using a single global lock to protect all operations, I chose per-match locking. This allows operations on different matches to execute concurrently.
+
+- **HashMap** would be suitable if a single global lock, such as synchronized, protected all operations on the map. In that design, both collection access and match state modifications would be protected by the same monitor. However, after switching to per-match locks, this protection is no longer sufficient. A lock associated with an individual MatchContext does not protect the shared HashMap structure against concurrent insertions, removals or lookups. All map operations would therefore still require an additional global lock, limiting the benefits of per-match synchronization.
+
+- **ConcurrentHashMap** addresses this issue by providing thread-safe concurrent access to the collection and allowing operations on different entries to proceed concurrently. However, it does not make compound operations atomic or protect the state of an individual match. Therefore, the ReentrantLock in each MatchContext is still necessary to serialize operations on the same match, such as updateScore() and finishMatch(). An additional identity check ensures that the map still references the same MatchContext, preventing operations from being performed on a match that has already been removed.
+
+- **getSummary()** builds consistent snapshots of individual matches on demand and sorts them by total score in descending order. Ties are broken by a monotonically increasing long sequence number assigned during startMatch(). The sequence number is internal and is not exposed to the client. The summary is not an atomic snapshot of the entire scoreboard, as individual matches may be read at different points in time.
+
+**Rejected:** 
+- **HashMap with a single global lock** — simpler, but prevents operations on different matches from executing concurrently.
+- **ReadWriteLock** — additional complexity is not justified by the adopted per-match locking model.
+- **A single global lock for all operations** — would provide atomic operations and a globally consistent snapshot, but would limit concurrency.
+- **A continuously ordered TreeSet** — requires removing and reinserting a match after every score change.
+- **PriorityQueue** — does not automatically reorder elements after a score change and does not guarantee iteration in priority order.
+- **Cached summaries** — premature optimization without evidence of a performance problem.
+  Complexity: O(1) average lookup and insertion, O(n) snapshot collection, and O(n log n) sorting per summary.
+
+
+
+
 ### 2.4 Implementation
 
-_To be completed after the implementation._
+## 2.4.1 Base Domain Model and TDD Stubs Setup
 
+**Prompt:** Define the minimal base domain structures, value objects, records, stub facade, and exception hierarchy required to establish the "red phase" of TDD for the World Cup Scoreboard library.
+
+**Context:** Following the architectural pivot and the adoption of neutral team naming (`team1`/`team2`) and internal `UUID`-based identification, the project requires a clean structural foundation. To practice strict Test-Driven Development (TDD), the initial API facade methods must throw `UnsupportedOperationException`, allowing unit tests to compile and fail as expected.
+
+**Outcome:** Established the core package structure and foundational types:
+- **`MatchId` Value Object:** A record wrapping `java.util.UUID` with a compact constructor for null-safety validation, a `random()` factory method for internal ID generation, a `fromString()` parsing helper, and an overridden `toString()` returning a clean raw UUID string for readable logging.
+- **`MatchSummary` Record:** An immutable data transfer object holding the state of a match (`id`, `team1`, `team2`, `team1Score`, `team2Score`) returned by the scoreboard API.
+- **`Scoreboard` Facade Stubs:** The main entry point exposing public operations (`startMatch`, `updateScore`, `finishMatch`, `getSummary`), initially implemented as stubs throwing `UnsupportedOperationException`.
+- **Domain Exception Hierarchy:** A dedicated unchecked exception structure rooted in `ScoreboardException`, containing specific runtime domain errors: `MatchNotFoundException`, `MatchAlreadyExistsException`, `InvalidScoreException`, and `InvalidTeamException`.
+
+**Rejected:** Using raw `String` primitives for identifiers (avoiding primitive obsession) and implementing full business logic before writing unit tests, in order to strictly adhere to the TDD methodology.
+
+#### 2.4.2 Unit Tests for Core Lifecycle Operations (`startMatch`, `updateScore`, `finishMatch`)
+
+**Prompt:** Design and implement a comprehensive suite of unit tests using JUnit 5 and AssertJ to verify the core scoreboard operations (`startMatch`, `updateScore`, `finishMatch`), covering both happy paths and domain exception handling.
+
+**Context:** With the base domain structures and stubbed facade in place (following TDD red phase), we need rigorous unit tests to drive the implementation of business logic and ensure thread-safe behavior, validation rules, and proper lifecycle management.
+
+**Outcome:** Created `ScoreboardTest` covering:
+- **Happy Paths:** Successful match initialization, absolute score updates (including downward corrections), and immediate removal upon finishing.
+- **Validation Rules:** Rejection of null/blank team names, self-playing teams (case-insensitive), and negative scores.
+- **Error Handling:** Verification that operations on non-existent or already finished match IDs correctly throw `MatchNotFoundException`.
+
+#### 2.4.2 Maven Project Configuration & Build Setup
+
+**Prompt:** Define and configure the project’s `pom.xml` for Java 21, ensuring zero external production dependencies while providing a robust testing and code-quality toolchain (JUnit 5, AssertJ, Maven Surefire, and JaCoCo coverage enforcement).
+
+**Context:** The library must run on pure Java 21 with no external production overhead. However, rigorous testing requires modern assertion libraries and code coverage gates to satisfy enterprise coding standards.
+
+**Outcome:** Configured the Maven build file with:
+- **Java 21 Release Flag:** `<maven.compiler.release>21</maven.compiler.release>` ensuring strict language compliance.
+- **Testing Toolchain:** Integrated JUnit 5 (`junit-bom` / `junit-jupiter`), `junit-platform-launcher` for Surefire test discovery, and AssertJ (`assertj-core`) for fluent assertions.
+- **JPMS Support:** Configured `maven-jar-plugin` to include the `Automatic-Module-Name` manifest entry (`com.sportradar.worldcup`).
+- **Quality Gate:** Integrated `jacoco-maven-plugin` configured to run unit tests and enforce a strict minimum line coverage threshold of 80% during the verify phase.
+
+**Rejected:** Adding external runtime dependencies (such as Lombok or Spring) to keep the core library lightweight, isolated, and strictly single-JVM in-memory.
+
+#### 2.4.4 Edge Cases Unit and Concurrency Tests (`ScoreboardEdgeCasesTest`)
+
+**Prompt:** Design and implement comprehensive unit and concurrency tests to verify critical architecture-driven edge cases: thread races between `finishMatch` and `updateScore`, strict whitespace trimming and case-insensitive self-play validation, `MatchId` collision safety via `putIfAbsent`, and accurate downward score corrections (VAR scenario).
+
+**Context:** Having established baseline lifecycle tests, the library must be stress-tested against concurrency hazards, edge formatting issues, and complex domain state transitions to guarantee enterprise robustness.
+
+**Outcome:** Created `ScoreboardEdgeCasesTest` covering:
+- **Concurrency / Race Conditions:** Using `CountDownLatch` and multi-threading (`ExecutorService`) to simulate simultaneous `finishMatch` and `updateScore` execution on the same match ID, proving safety against dead/removed matches.
+- **Whitespace & Normalization:** Verifying that teams passed with leading/trailing spaces are correctly trimmed, and matching rules properly reject self-play regardless of casing or padding.
+- **Collision Resilience:** Ensuring atomic insertion logic prevents ID overwrite.
+- **Downward Corrections:** Verifying absolute score updates handle score reductions correctly.
+- **Primary Sorting (Total Score):** Ensuring matches with a higher sum of goals for `team1` and `team2` appear first in the summary.
+- **Secondary Sorting (Chronological Tie-Breaker):** Ensuring that in the event of a score tie, the match that started *most recently* appears above older matches.
+- 
 ### 2.5 Testing
 
 #### 2.5.1 Test Scenarios and Validation Strategy

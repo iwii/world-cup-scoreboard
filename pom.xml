@@ -17,8 +17,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <junit.version>6.1.2</junit.version>
-        <jacoco.version>0.8.15</jacoco.version>
+        <junit.jupiter.version>5.11.4</junit.jupiter.version>
+        <jacoco.version>0.8.12</jacoco.version>
+        <assertj.version>3.27.3</assertj.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
@@ -30,7 +31,7 @@
             <dependency>
                 <groupId>org.junit</groupId>
                 <artifactId>junit-bom</artifactId>
-                <version>${junit.version}</version>
+                <version>${junit.jupiter.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -38,18 +39,27 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- JUnit Jupiter aggregator: API (incl. Assertions), params, engine -->
+        <!-- JUnit Jupiter aggregator: API, params, engine -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
-        <!--TODO: Needed by Surefire on newer Maven/JUnit setups - check is it still necesssary-->
-<!--        <dependency>-->
-<!--            <groupId>org.junit.platform</groupId>-->
-<!--            <artifactId>junit-platform-launcher</artifactId>-->
-<!--            <scope>test</scope>-->
-<!--        </dependency>-->
+
+        <!-- Required by Maven Surefire on newer JUnit 5 setups for test discovery -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- AssertJ for fluent assertions in unit tests -->
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -73,13 +83,13 @@
                 <configuration>
                     <archive>
                         <manifestEntries>
-                            <Automatic-Module-Name>com.sportradar.worldcup.scoreboard</Automatic-Module-Name>
+                            <Automatic-Module-Name>com.sportradar.worldcup</Automatic-Module-Name>
                         </manifestEntries>
                     </archive>
                 </configuration>
             </plugin>
 
-            <!-- Code coverage -->
+            <!-- Code coverage with JaCoCo (enforcing 80% minimum line coverage) -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
