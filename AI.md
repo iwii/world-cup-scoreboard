@@ -23,7 +23,10 @@
    - [2.4 Implementation](#24-implementation)
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
+     - [2.5.2 Test Implementation (TDD)](#252-test-implementation-tdd)
    - [2.6 Code Review and Refactoring](#26-code-review-and-refactoring)
+     - [2.6.1 Changing Automatic-Module-Name](#261-changing-automatic-module-name)
+     - [2.6.2 Decoupling MatchNotFoundException from MatchId](#262-decoupling-matchnotfoundexception-from-matchid)
    - [2.7 Documentation Review](#27-documentation-review)
 3. [Human Review and Validation](#3-human-review-and-validation)
 
@@ -218,18 +221,58 @@ For each scenario, describe the expected result and recommend a testing approach
 **Context:** In-memory Java 21 Maven project with immutable domain objects, a private `HashMap`, internally generated match IDs and a shared `synchronized` monitor.
 
 **Outcome:** The strategy covers the eight scenario groups above. Decisions:
-- JUnit Jupiter and the Java 21 concurrency utilities only, no extra test dependencies.
+
+- JUnit Jupiter (including parameterized tests) and the Java 21 concurrency utilities only, no extra test dependencies.
+- The test suite was prepared before production implementation. The implementation is intended to follow the Red-Green-Refactor cycle, with tests guiding incremental development.
 - Concurrent tests use `ExecutorService` and `CountDownLatch` for a simultaneous start, with timeouts so that a failing test cannot hang.
-- Tests assert guarantees (unique IDs, exactly one successful finish, consistent snapshots) and do not assume a thread scheduling order.
+- Tests assert guarantees (unique IDs, exactly one successful finish, atomic score updates without partially applied scores, consistent snapshots) and do not assume a thread scheduling order. Where the outcome depends on which operation acquires the monitor first (an update racing with a finish), the test accepts exactly the two valid outcomes and checks that each is coherent.
 - Tests check observable API behavior, not internals.
 - After a match is finished, updating or finishing it again is expected to fail with `MatchNotFoundException`; in concurrent finish attempts exactly one call succeeds and the others get `MatchNotFoundException`.
-- Prompt items 3 and 5 were written before the decision to remove finished matches (see 2.3.3); in the final design they become "MatchNotFoundException on a finished match" and "a finished match is no longer in the summary".
 
-Results are verified with `mvn clean verify`.
+Prompt items 3 and 5 were written before the decision to remove finished matches (see 2.3.3); in the final design they become "`MatchNotFoundException` for a finished match" and "a finished match is no longer in the summary".
+
+Results will be verified with `mvn clean verify`.
+
+
+#### 2.5.2 Test Implementation (TDD)
+
+**Prompt:** Based on the finalized requirements and design decisions, review the test suite prepared following the TDD approach. Verify that section 2.5.1 accurately describes the testing strategy, covered scenarios and implementation choices. Identify any missing edge cases or inconsistencies with the established requirements.
+
+**Context:** The README.md and AI.md design decisions are finalized. The first iteration of the tests is complete. Production implementation has not started; the public API signatures are being established through the tests.
+
+**Outcome:** I wrote two test classes before implementing the production code: `ScoreboardTest` (functional tests grouped by operation) and `ScoreboardConcurrencyTest` (concurrency tests with a small helper coordinating simultaneous task execution). The tests establish the expected public API contract.
+
+Edge cases covered, beyond the basic scenarios:
+
+- **Names:** trimming, whitespace-only names according to `String.isBlank()`, identical teams ignoring case and surrounding whitespace.
+- **Scores:** `Integer.MIN_VALUE` (rejected as negative) and `Integer.MAX_VALUE` in both scores (the `long` total must not overflow when ordering).
+- **Atomicity:** a rejected update or a rejected start leaves the scoreboard unchanged.
+- **Ordering:** ties broken by start order and not by update order, 50 matches with equal scores (verifying deterministic ordering independent of `HashMap` iteration order or UUID values), equal totals with different score splits, and the assignment's reference example.
+- **IDs:** an ID from another `Scoreboard` instance counts as unknown, and a match can be restarted after being finished.
+- **Immutability:** unmodifiable summary list (including when empty), snapshots unaffected by subsequent changes.
+- **Concurrency:** unique IDs on simultaneous starts, atomic score updates without partially applied scores, exactly one successful finish, an update racing with a finish, and consistent snapshots (size, ordering and tie-break) while other threads update matches.
+
+**Rejected:** Mocking and additional assertion libraries (unnecessary for an in-memory library); `Thread.sleep()` for synchronization (replaced by latches and `Future.get()` with timeouts).
 
 ### 2.6 Code Review and Refactoring
 
-_To be completed after the implementation._
+This section records my own review findings and decisions, not prompts. Where an issue was first raised by an AI review, the entry says so and points to the prompt.
+
+#### 2.6.1 Changing Automatic-Module-Name
+
+**Finding:** After the exceptions were placed in `com.sportradar.worldcup.exception`, `Automatic-Module-Name` (`com.sportradar.worldcup.scoreboard`) was no longer the prefix of all packages.
+
+**Decision:** I changed the package layout accordingly and set `Automatic-Module-Name` to `com.sportradar.worldcup`, the common root of both packages, in the maven-jar-plugin configuration and in the README (Build decisions). I will check the result with `jar --describe-module`.
+
+**Considered:** moving the exceptions into `com.sportradar.worldcup.scoreboard.exception`, which would have kept the old module name.
+
+#### 2.6.2 Decoupling MatchNotFoundException from MatchId
+
+**Finding:** `MatchNotFoundException` imported `MatchId` from a package that does not exist. It would also have made the `exception` package depend on `scoreboard` while `scoreboard` depends on `exception`. 
+
+**Decision:** The constructor takes a `String` message and `Scoreboard` builds it, so the dependency goes only from `scoreboard` to `exception`. The tests are not affected, because they never construct this exception.
+
+_More entries will be added during the implementation._
 
 ### 2.7 Documentation Review
 
