@@ -24,9 +24,11 @@
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
      - [2.5.2 Test Implementation (TDD)](#252-test-implementation-tdd)
+     - [2.5.3 Review of the Tests and the Skeleton](#253-review-of-the-tests-and-the-skeleton)
    - [2.6 Code Review and Refactoring](#26-code-review-and-refactoring)
      - [2.6.1 Changing Automatic-Module-Name](#261-changing-automatic-module-name)
      - [2.6.2 Decoupling MatchNotFoundException from MatchId](#262-decoupling-matchnotfoundexception-from-matchid)
+     - [2.6.3 Aligning the Implementation with the Design](#263-aligning-the-implementation-with-the-design)
    - [2.7 Documentation Review](#27-documentation-review)
 3. [Human Review and Validation](#3-human-review-and-validation)
 
@@ -142,12 +144,13 @@ The design was explored with AI assistance and some topics were revisited as the
 
 **Outcome:** I chose a minimal model:
 - `Scoreboard` coordinates the operations, guards access and produces the summary.
-- `Match` is an immutable class holding the match state; `withScore()` returns a new instance.
-- `MatchId` (wraps a UUID), `Team` (validates and stores the name) and `MatchSummary` (returned by the public API) are immutable records.
+- `Match` is a package-private immutable record holding the match state and the start sequence number; `withScore()` returns a new instance.
+- `Team` is a package-private immutable record that validates and stores the trimmed name; `sameNameAs()` compares names ignoring case.
+- `MatchId` (wraps a UUID) and `MatchSummary` (returned by the public API, with team names as strings and without the start sequence number) are public immutable records.
 
-The scoreboard keeps a private mutable `HashMap<MatchId, Match>` and replaces the stored instance on every change, so the collection is mutable but the domain objects are not. `Team` keeps the default `equals()`/`hashCode()` because teams are never used as keys; the home/away check uses `equalsIgnoreCase()` explicitly.
+The scoreboard keeps a private mutable `HashMap<MatchId, Match>` and replaces the stored instance on every change, so the collection is mutable but the domain objects are not. `Team` keeps the default `equals()`/`hashCode()` because teams are never used as keys; the home/away check uses `sameNameAs()`, which ignores case.
 
-**Rejected:** a separate `Score` type (an extra abstraction without enough value) and conventional getters/setters.
+**Rejected:** a separate `Score` type (an extra abstraction without enough value), conventional getters/setters, and making `Match` and `Team` public (they are internal and must not be part of the API).
 
 #### 2.3.2 Match Identification and Storage
 
@@ -199,7 +202,19 @@ Errors are unchecked exceptions deriving from `ScoreboardException`: `MatchNotFo
 
 ### 2.4 Implementation
 
-_To be completed after the implementation._
+**Prompt:** Based on the finalized requirements, design decisions and existing test suite, implement the Java 21 World Cup Scoreboard library. Follow the established public API and design constraints. Use immutable domain records, a private in-memory `HashMap`, internally generated UUIDs, synchronized public operations and deterministic summary ordering. Implement input validation and the agreed exception hierarchy. Avoid unnecessary abstractions and functionality outside the assignment requirements.
+
+**Context:** The tests described in Section 2.5 had been prepared and were failing against the API skeleton. Tool: **[Claude / ChatGPT]**.
+
+**Outcome:** The initial implementation included a `Scoreboard` with synchronized public methods, a `HashMap<MatchId, Match>`, a monotonically increasing start sequence as the summary ordering tie-breaker, and team validation directly in `Scoreboard`. It differed from the design described in Section 2.3.1 (see Section 2.6.3).
+
+**Review prompt:** Review the added classes and implementation changes (`Match`, `Scoreboard` and `MatchSummary`) for correctness and consistency with the established design decisions.
+
+**Test status:** All 172 tests passed with `mvn clean verify`. Line coverage was close to 100%. The remaining uncovered branch was the UUID collision-handling path in `startMatch()`: it requires generating a UUID that already exists in the map. Exercising this path would require a controllable UUID generator, adding complexity solely for testing an extremely unlikely event. I decided not to introduce that additional abstraction.
+
+**Follow-up prompt:** Review the implementation against the finalized design decisions in Section 2.3.1. Identify any inconsistencies in the domain model, encapsulation and validation responsibilities. In particular, assess whether introducing a dedicated immutable `Team` record and making `Match` package-private would improve alignment with the design without adding unnecessary complexity. Also assess whether `totalScore()` belongs in the public `MatchSummary` API or should remain an internal implementation detail.
+
+**Outcome:** Introduced a package-private immutable `Team` record to encapsulate team name validation, trimming and case-insensitive comparison. Changed `Match` to package-private to keep the internal domain model hidden from API consumers. Removed the redundant `totalScore()` method from `MatchSummary` and its dedicated test, keeping score aggregation within `Match`.
 
 ### 2.5 Testing
 
@@ -240,7 +255,7 @@ Results will be verified with `mvn clean verify`.
 
 **Context:** The README.md and AI.md design decisions are finalized. The first iteration of the tests is complete. Production implementation has not started; the public API signatures are being established through the tests.
 
-**Outcome:** I wrote two test classes before implementing the production code: `ScoreboardTest` (functional tests grouped by operation) and `ScoreboardConcurrencyTest` (concurrency tests with a small helper coordinating simultaneous task execution). The tests establish the expected public API contract.
+**Outcome:** The AI generated the first version of two test before implementing the production code: `ScoreboardTest` (functional tests grouped by operation) and `ScoreboardConcurrencyTest` (concurrency tests with a small helper coordinating simultaneous task execution). The tests establish the expected public API contract.
 
 Edge cases covered, beyond the basic scenarios:
 
@@ -254,17 +269,32 @@ Edge cases covered, beyond the basic scenarios:
 
 **Rejected:** Mocking and additional assertion libraries (unnecessary for an in-memory library); `Thread.sleep()` for synchronization (replaced by latches and `Future.get()` with timeouts).
 
+#### 2.5.3 Review of the Tests and the Skeleton
+
+**Prompt:** Check the correctness of the tests against the assumptions and point out logical errors; later: check everything before I commit.
+
+**Context:** The two test classes (see 2.5.2), my own corrections to them, and the API skeleton were ready, with no production code yet.
+
+**Outcome:** I applied most of the findings:
+- A test that could not fail at runtime (exception hierarchy) was replaced by a check on the classes, including that they are unchecked.
+- A blank away team is now tested separately from a blank home team.
+- The total-score ordering test no longer depends on the tie-break rule.
+- The unmodifiable summary list is checked for `add`, `set`, `remove` and `clear`.
+- Failures in worker threads are reported through `Outcome` (including `AssertionError`), and readers now run until the writers finish, with a check that they overlapped with them.
+
+Two suggestions I did not follow: I catch `Exception | AssertionError` instead of `Throwable` (JVM errors should not be treated as task outcomes), and I kept my own data in `matchesReferenceExampleOrdering` instead of the example from the assignment. The review also found the problems described in 2.6.1 and 2.6.2.
+
 ### 2.6 Code Review and Refactoring
 
 This section records my own review findings and decisions, not prompts. Where an issue was first raised by an AI review, the entry says so and points to the prompt.
 
 #### 2.6.1 Changing Automatic-Module-Name
 
-**Finding:** After the exceptions were placed in `com.sportradar.worldcup.exception`, `Automatic-Module-Name` (`com.sportradar.worldcup.scoreboard`) was no longer the prefix of all packages.
+**Finding:** After introducing the separate `com.sportradar.worldcup.exception` package, the existing `Automatic-Module-Name` (`com.sportradar.worldcup.scoreboard`) no longer reflected the root package of the library.
 
-**Decision:** I changed the package layout accordingly and set `Automatic-Module-Name` to `com.sportradar.worldcup`, the common root of both packages, in the maven-jar-plugin configuration and in the README (Build decisions). I will check the result with `jar --describe-module`.
+**Decision:** I changed `Automatic-Module-Name` to `com.sportradar.worldcup`, aligning the module name with the common root package. I updated the Maven JAR plugin configuration and the README (Build decisions).
 
-**Considered:** moving the exceptions into `com.sportradar.worldcup.scoreboard.exception`, which would have kept the old module name.
+**Considered:** Moving the exceptions into `com.sportradar.worldcup.scoreboard.exception` to retain the original module name.
 
 #### 2.6.2 Decoupling MatchNotFoundException from MatchId
 
@@ -272,7 +302,14 @@ This section records my own review findings and decisions, not prompts. Where an
 
 **Decision:** The constructor takes a `String` message and `Scoreboard` builds it, so the dependency goes only from `scoreboard` to `exception`. The tests are not affected, because they never construct this exception.
 
-_More entries will be added during the implementation._
+#### 2.6.3 Aligning the implementation with the design
+
+**Finding:** The first implementation differed from the design in 2.3.1: it had no `Team` type, `Match` was public, and `MatchSummary` contained a `totalScore()` method that duplicated functionality already available in `Match`. Raised in the AI review of the implementation.
+
+**Decision:** I introduced a package-private `Team` record to encapsulate team name validation, trimming and case-insensitive comparison. I made `Match` package-private and removed `totalScore()` from `MatchSummary`, together with its dedicated test, because score aggregation is an internal concern already covered by `Match` and the scoreboard ordering tests.
+
+**Considered:** Keeping team names as strings and validating them directly in `Scoreboard`; I kept `Team` to encapsulate the validation and comparison rules in a value object.
+
 
 ### 2.7 Documentation Review
 
@@ -280,7 +317,7 @@ _More entries will be added during the implementation._
 
 **Context:** README and AI.md drafts written before the implementation.
 
-**Outcome:** I applied the suggestions to the README: fixed the links, removed duplicated points, split "Reasoning" into build and design decisions, and added the missing assumptions (0-0 start, home and away teams must differ) and the ordering rule. I also added a trade-off for allowing a team in several simultaneous matches, and postponed the usage example until the API exists. In AI.md I normalized the headings, shortened the outcomes to decisions and rejected alternatives, and marked unfinished sections explicitly. I also replaced keeping finished matches in memory with removal on finish and documented how late updates are handled (see 2.3.3).
+**Outcome:** I applied the suggestions to the README: fixed the links, removed duplicated points, split "Reasoning" into build and design decisions, and added the missing assumptions (0-0 start, home and away teams must differ) and the ordering rule. I also added a trade-off for allowing a team in several simultaneous matches, and postponed the usage example until the API exists. In AI.md I normalized the headings, shortened the outcomes to decisions and rejected alternatives, and marked unfinished sections explicitly. I also added the Usage example after the public API was implemented and documented the final implementation decisions and trade-offs.
 
 ## 3. Human Review and Validation
 
