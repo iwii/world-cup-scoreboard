@@ -68,11 +68,11 @@ Finishing a match removes it from the scoreboard and returns its final summary:
 MatchSummary finalResult = scoreboard.finishMatch(uruguayItaly.id());
 ```
 
-Querying a single ongoing match:
+Querying ongoing match by name:
 
 ```java
 
-Optional<MatchSummary> match = scoreboard.getMatch(spainBrazil.id());
+Optional<MatchSummary> match = scoreboard.getMatchesByTeam(String team)
 ```
 
 

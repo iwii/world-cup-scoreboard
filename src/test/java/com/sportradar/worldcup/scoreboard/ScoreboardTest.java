@@ -11,8 +11,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.List;
 import java.util.concurrent.*;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.*;
 
 class ScoreboardTest {
 
@@ -282,5 +281,85 @@ class ScoreboardTest {
     void finishMatchShouldRejectNullMatchId() {
         assertThatThrownBy(() -> scoreboard.finishMatch(null))
                 .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam returns only matches involving the given team")
+    void getMatchesByTeamShouldFilterByTeam() {
+        MatchSummary mexicoCanada = scoreboard.startMatch("Mexico", "Canada");
+        scoreboard.startMatch("Spain", "Brazil");
+        scoreboard.updateScore(mexicoCanada.id(), 0, 5);
+
+        assertThat(scoreboard.getMatchesByTeam("Canada"))
+                .extracting(MatchSummary::id)
+                .containsExactly(mexicoCanada.id());
+
+        assertThat(scoreboard.getMatchesByTeam("Brazil"))
+                .extracting(MatchSummary::team1, MatchSummary::team2)
+                .containsExactly(tuple("Spain", "Brazil"));
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam is case-insensitive and trims whitespace")
+    void getMatchesByTeamShouldNormalizeInput() {
+        scoreboard.startMatch("Poland", "Argentina");
+
+        assertThat(scoreboard.getMatchesByTeam("  poland  ")).hasSize(1);
+        assertThat(scoreboard.getMatchesByTeam("POLAND")).hasSize(1);
+        assertThat(scoreboard.getMatchesByTeam("argentina")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam returns an empty list when the team has no ongoing matches")
+    void getMatchesByTeamShouldReturnEmptyForUnknownTeam() {
+        scoreboard.startMatch("Poland", "Argentina");
+
+        assertThat(scoreboard.getMatchesByTeam("Germany")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam rejects null, empty or blank team names")
+    void getMatchesByTeamShouldRejectInvalidInput() {
+        assertThatThrownBy(() -> scoreboard.getMatchesByTeam(null))
+                .isInstanceOf(InvalidTeamException.class);
+        assertThatThrownBy(() -> scoreboard.getMatchesByTeam(""))
+                .isInstanceOf(InvalidTeamException.class);
+        assertThatThrownBy(() -> scoreboard.getMatchesByTeam("   "))
+                .isInstanceOf(InvalidTeamException.class);
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam returns an immutable list")
+    void getMatchesByTeamShouldReturnImmutableList() {
+        scoreboard.startMatch("Poland", "Argentina");
+        List<MatchSummary> result = scoreboard.getMatchesByTeam("Poland");
+
+        assertThatThrownBy(() -> result.add(null))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam orders like getSummary: total descending, then most recent")
+    void getMatchesByTeamShouldOrderLikeSummary() {
+        MatchSummary first = scoreboard.startMatch("Poland", "Germany");
+        MatchSummary second = scoreboard.startMatch("Poland", "France");
+        MatchSummary third = scoreboard.startMatch("Poland", "Spain");
+
+        scoreboard.updateScore(first.id(), 1, 1);   // total 2, started first
+        scoreboard.updateScore(second.id(), 2, 2);  // total 4, started second
+        scoreboard.updateScore(third.id(), 3, 0);   // total 3, started last
+
+        assertThat(scoreboard.getMatchesByTeam("Poland"))
+                .extracting(MatchSummary::id)
+                .containsExactly(second.id(), third.id(), first.id());
+    }
+
+    @Test
+    @DisplayName("getMatchesByTeam excludes finished matches")
+    void getMatchesByTeamShouldExcludeFinishedMatches() {
+        MatchSummary match = scoreboard.startMatch("Poland", "Argentina");
+        scoreboard.finishMatch(match.id());
+
+        assertThat(scoreboard.getMatchesByTeam("Poland")).isEmpty();
     }
 }

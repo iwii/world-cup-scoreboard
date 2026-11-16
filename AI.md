@@ -28,7 +28,7 @@
      - [2.4.4 Edge Cases Unit and Concurrency Tests](#244-edge-cases-unit-and-concurrency-tests)
      - [2.4.5 Core Business Logic and Concurrency Implementation](#245-core-business-logic-and-concurrency-implementation)
      - [2.4.6 Exception Handling and Validation Unit Tests](#246-exception-handling-and-validation-unit-tests)
-     - [2.4.7 API Encapsulation and Access Modifier Refinement](#247-api-encapsulation-and-access-modifier-refinement~~~~)
+     - [2.4.7 API Encapsulation and Access Modifier Refinement](#247-api-encapsulation-and-access-modifier-refinement)
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
      - [2.5.2 Test Hardening and Flakiness Fixes](#252-test-hardening-and-flakiness-fixes)
@@ -338,6 +338,25 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 - **`MatchId` & `MatchSummary`:** Maintained as `public` records because external clients outside the package must reference match handles and read summary data objects.
 - **Exceptions:** Confirmed all domain exceptions are `public` for proper client-side error handling.
 
+#### 2.4.8 Additional Query Operation
+
+**Prompt:** The assignment requires exactly one additional operation beyond the four core ones. Propose a single operation that is useful for a live data feed consumer, fits the existing API and does not duplicate `getSummary`.
+Evaluate `getMatch(MatchId)` and `getMatchesByTeam(String team)`.
+
+**Context:** `getSummary` already returns all ongoing matches sorted by total score. A client that wants to render a single widget needs either one match or all matches for one team. The two candidate operations overlap: a single match can be found by filtering `getMatchesByTeam` results.
+
+**Outcome:** I chose `getMatchesByTeam(String team)`: 
+- It covers both "all matches for a team" and "find a match by ID" (via a stream filter over the result).
+- It is a single public method, so it satisfies "exactly one additional operation" without ambiguity.
+- Team names are normalized the same way as in `startMatch` (trimmed, case-insensitive, `Locale.ROOT`), so the API is consistent.
+- Ordering reuses the same `SUMMARY_ORDER` comparator as `getSummary`, so the two methods never disagree on order.
+
+**Rejected:**
+- **`getMatch(MatchId)` as a second public method:** would be a second operation, which the assignment does not allow; the stream filter covers the use case.
+- **`getMatches(Optional<MatchId>, Optional<String>)` with optional filters:**  Optional in parameters is an anti-pattern; two clear overloads would be two operations in disguise.
+- **`reset()` / `getTopScoringMatches(int)`:** either outside the library's scope or a duplicate of `getSummary`.
+- **`applyUpdate(MatchUpdate)` with idempotency:** interesting but a larger change (new public type, per-source sequence tracking, extra concurrency tests); documented as out of scope in the README.
+
 
 ### 2.5 Testing
 
@@ -526,9 +545,10 @@ All AI suggestions were reviewed before being incorporated. Suggestions I change
 12. Added `ScoreboardRaceConditionTest` (anonymous `Scoreboard` subclass) and
     null `MatchId` tests for `updateScore` and `finishMatch`.
 13. Bumped `assertj-core` to 3.27.7 to address CVE-2026-24400.
+14. Added `getMatchesByTeam(String team)` as the single additional operation;
+    README explains why it covers both "by team" and "by ID" use cases and why `getMatch(MatchId)` was not added as a second public method.
 
 Verification:
 - Verified with `mvn clean verify`: all tests pass, JaCoCo ≥ 80%.
 - `jar --describe-module` for the module name.
 - `mvn dependency:tree | grep assertj` shows `assertj-core:3.27.7:test`.
-- [To be completed after the implementation: tests reviewed by hand, results of the concurrency tests, known limitations.]

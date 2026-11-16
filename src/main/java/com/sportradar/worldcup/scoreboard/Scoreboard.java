@@ -4,6 +4,7 @@ import com.sportradar.worldcup.scoreboard.exception.*;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -15,6 +16,13 @@ public class Scoreboard {
 
     // Monotonically increasing sequence generator for chronological tie-breaking
     private final AtomicLong sequenceGenerator = new AtomicLong(0);
+
+    private static final Comparator<MatchContext.Snapshot> SNAPSHOT_ORDER =
+            Comparator
+                    .comparingLong((MatchContext.Snapshot s) ->
+                            (long) s.summary().team1Score() + s.summary().team2Score()).reversed()
+                    .thenComparing(Comparator.comparingLong(
+                            MatchContext.Snapshot::sequence).reversed());
 
     /**
      * Starts a new match with initial score 0-0 after validating and trimming team names.
@@ -94,14 +102,25 @@ public class Scoreboard {
     public List<MatchSummary> getSummary() {
             return matches.values().stream()
                     .map(MatchContext::toSnapshot)
-                    .sorted(Comparator
-                            .comparingLong((MatchContext.Snapshot s) ->
-                                    (long) s.summary().team1Score() + s.summary().team2Score()).reversed()
-                            .thenComparing(Comparator.comparingLong(
-                                    MatchContext.Snapshot::sequence).reversed()))
+                    .sorted(SNAPSHOT_ORDER)
                     .map(MatchContext.Snapshot::summary)
                     .toList();
         }
+
+    public List<MatchSummary> getMatchesByTeam(String team) {
+        String normalized = validateTeamNameAndTrimmed(team).toLowerCase(Locale.ROOT);
+        return matches.values().stream()
+                .map(MatchContext::toSnapshot)              // ← snapshot pod lockiem
+                .filter(s -> matchesTeam(s.summary(), normalized))
+                .sorted(SNAPSHOT_ORDER)
+                .map(MatchContext.Snapshot::summary)
+                .toList();
+    }
+
+    private static boolean matchesTeam(MatchSummary summary, String normalizedTeam) {
+        return summary.team1().toLowerCase(Locale.ROOT).equals(normalizedTeam)
+                || summary.team2().toLowerCase(Locale.ROOT).equals(normalizedTeam);
+    }
 
     private String validateTeamNameAndTrimmed(String teamName) {
         if (teamName == null || teamName.trim().isEmpty()) {
