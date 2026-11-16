@@ -234,12 +234,12 @@ class ScoreboardConcurrencyTest {
     }
     @RepeatedTest(100)
     void updateRacingWithFinishHasOnlyTwoValidOutcomes() throws Exception {
-        Scoreboard localScoreboard = new Scoreboard();
-        MatchSummary match = localScoreboard.startMatch("Mexico", "Canada");
+        Scoreboard scoreboard = new Scoreboard();
+        MatchSummary match = scoreboard.startMatch("Mexico", "Canada");
 
         List<Callable<MatchSummary>> tasks = List.of(
-                () -> localScoreboard.updateScore(match.id(), 3, 2),
-                () -> localScoreboard.finishMatch(match.id())
+                () -> scoreboard.updateScore(match.id(), 3, 2),
+                () -> scoreboard.finishMatch(match.id())
         );
 
         List<Outcome<MatchSummary>> outcomes = runAtOnce(tasks);
@@ -257,7 +257,7 @@ class ScoreboardConcurrencyTest {
             assertEquals(0, finish.value().team1Score());
             assertEquals(0, finish.value().team2Score());
         }
-        assertTrue(localScoreboard.getSummary().isEmpty());
+        assertTrue(scoreboard.getSummary().isEmpty());
     }
 
     @Test
@@ -277,8 +277,9 @@ class ScoreboardConcurrencyTest {
                 .<Callable<Void>>mapToObj(index -> () -> {
                     try {
                         MatchId id = ids.get(index);
-                        for (int score = 1; score <= 50; score++) {
+                        for (int score = 1; score <= 500; score++) {
                             scoreboard.updateScore(id, score, score);
+                            if(score % 100 == 0) Thread.yield();
                         }
                         return null;
                     } finally {
@@ -312,7 +313,7 @@ class ScoreboardConcurrencyTest {
 
         List<MatchSummary> finalSnapshot = scoreboard.getSummary();
         assertConsistentSnapshot(finalSnapshot, startIndex);
-        assertTrue(finalSnapshot.stream().allMatch(m -> m.team1Score() == 50 && m.team2Score() == 50));
+        assertTrue(finalSnapshot.stream().allMatch(m -> m.team1Score() == 500 && m.team2Score() == 500));
         assertEquals(ids.reversed(), finalSnapshot.stream().map(MatchSummary::id).toList());
     }
 }

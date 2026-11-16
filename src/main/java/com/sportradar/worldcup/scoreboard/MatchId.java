@@ -1,5 +1,7 @@
 package com.sportradar.worldcup.scoreboard;
 
+import com.sportradar.worldcup.scoreboard.exception.InvalidMatchIdException;
+
 import java.util.Objects;
 import java.util.UUID;
 
@@ -11,7 +13,7 @@ public record MatchId(UUID value) {
     /**
      * Creates a new random match identifier using UUID.randomUUID().
      */
-    public static MatchId random() {
+    static MatchId random() {
         return new MatchId(UUID.randomUUID());
     }
 
@@ -20,7 +22,11 @@ public record MatchId(UUID value) {
      */
     public static MatchId fromString(String value) {
         Objects.requireNonNull(value, "MatchId string cannot be null");
-        return new MatchId(UUID.fromString(value));
+        try {
+            return new MatchId(UUID.fromString(value));
+        } catch (IllegalArgumentException e) {
+            throw new InvalidMatchIdException("Invalid MatchId format: " + value, e);
+        }
     }
 
     @Override

@@ -26,7 +26,7 @@ class ScoreboardTest {
     @Test
     @DisplayName("Should successfully start a match with 0-0 score and return unique MatchId")
     void shouldStartMatchSuccessfully() {
-        MatchId matchId = scoreboard.startMatch("Poland", "Argentina");
+        MatchId matchId = scoreboard.startMatch("Poland", "Argentina").id();
 
         assertThat(matchId).isNotNull();
         assertThat(matchId.value()).isNotNull();
@@ -68,7 +68,7 @@ class ScoreboardTest {
     @Test
     @DisplayName("Should successfully update score with absolute values, including downward corrections")
     void shouldUpdateScoreSuccessfully() {
-        MatchId matchId = scoreboard.startMatch("Spain", "Italy");
+        MatchId matchId = scoreboard.startMatch("Spain", "Italy").id();
 
         // First update
         scoreboard.updateScore(matchId, 2, 1);
@@ -88,7 +88,7 @@ class ScoreboardTest {
     @Test
     @DisplayName("Should throw InvalidScoreException when negative scores are provided")
     void shouldRejectNegativeScores() {
-        MatchId matchId = scoreboard.startMatch("Brazil", "Croatia");
+        MatchId matchId = scoreboard.startMatch("Brazil", "Croatia").id();
 
         assertThatThrownBy(() -> scoreboard.updateScore(matchId, -1, 0))
                 .isInstanceOf(InvalidScoreException.class);
@@ -100,8 +100,8 @@ class ScoreboardTest {
     @Test
     @DisplayName("Should successfully finish a match and remove it from the active summary")
     void shouldFinishMatchSuccessfully() {
-        MatchId matchId1 = scoreboard.startMatch("Team A", "Team B");
-        MatchId matchId2 = scoreboard.startMatch("Team C", "Team D");
+        MatchId matchId1 = scoreboard.startMatch("Team A", "Team B").id();
+        MatchId matchId2 = scoreboard.startMatch("Team C", "Team D").id();
 
         scoreboard.finishMatch(matchId1);
 
@@ -114,7 +114,7 @@ class ScoreboardTest {
     @DisplayName("Should throw MatchNotFoundException when updating or finishing a non-existent or finished match")
     void shouldThrowExceptionForUnknownOrFinishedMatch() {
         MatchId unknownId = MatchId.random();
-        MatchId matchId = scoreboard.startMatch("Japan", "Senegal");
+        MatchId matchId = scoreboard.startMatch("Japan", "Senegal").id();
 
         // Unknown match operations
         assertThatThrownBy(() -> scoreboard.updateScore(unknownId, 1, 0))
@@ -138,7 +138,7 @@ class ScoreboardTest {
     @DisplayName("Edge Case 1: Thread race between finishMatch and updateScore should throw MatchNotFoundException")
     void shouldHandleRaceConditionBetweenFinishAndriUpdate() throws InterruptedException, ExecutionException {
         // Given
-        MatchId matchId = scoreboard.startMatch("Germany", "France");
+        MatchId matchId = scoreboard.startMatch("Germany", "France").id();
 
         int threadCount = 10;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
@@ -184,7 +184,7 @@ class ScoreboardTest {
     @DisplayName("Edge Case 2: Whitespace trimming and case-insensitivity on team names")
     void shouldTrimWhitespaceAndHandleCaseInsensitivity() {
         // Given teams with spaces and mixed casing
-        MatchId matchId = scoreboard.startMatch("  Brazil  ", "ARGENTINA ");
+        MatchId matchId = scoreboard.startMatch("  Brazil  ", "ARGENTINA ").id();
 
         List<MatchSummary> summary = scoreboard.getSummary();
         assertThat(summary).hasSize(1);
@@ -200,7 +200,7 @@ class ScoreboardTest {
     @DisplayName("Edge Case 4: Downward score correction (VAR scenario) should apply absolute values correctly")
     void shouldHandleDownwardScoreCorrection() {
         // Given an active match
-        MatchId matchId = scoreboard.startMatch("Portugal", "Uruguay");
+        MatchId matchId = scoreboard.startMatch("Portugal", "Uruguay").id();
 
         // Initial score update: 2:1
         scoreboard.updateScore(matchId, 2, 1);
@@ -223,13 +223,10 @@ class ScoreboardTest {
 
     @Test
     @DisplayName("Should order summary by total score descending, and then by most recently started match")
-    void shouldOrderSummaryCorrectly() throws InterruptedException {
-        // Given: Matches started sequentially with time gaps
-        MatchId match1 = scoreboard.startMatch("Mexico", "Canada"); // 0:0 (started first)
-        Thread.sleep(10);
-        MatchId match2 = scoreboard.startMatch("Spain", "Brazil");   // 0:0
-        Thread.sleep(10);
-        MatchId match3 = scoreboard.startMatch("Germany", "France"); // 0:0 (started last)
+    void shouldOrderSummaryCorrectly() {
+        MatchId match1 = scoreboard.startMatch("Mexico", "Canada").id(); // 0:0 (started first)
+        MatchId match2 = scoreboard.startMatch("Spain", "Brazil").id();   // 0:0
+        MatchId match3 = scoreboard.startMatch("Germany", "France").id(); // 0:0 (started last)
 
         // When: Scores are updated
         scoreboard.updateScore(match1, 0, 2); // Total: 2
@@ -249,5 +246,27 @@ class ScoreboardTest {
 
         // 3rd: Mexico vs Canada (Total 2, started *earlier*)
         assertThat(summary.get(2).id()).isEqualTo(match1);
+    }
+
+    @Test
+    @DisplayName("updateScore on a finished match throws MatchNotFoundException")
+    void shouldRejectUpdateOnFinishedMatch() {
+        MatchId matchId = scoreboard.startMatch("Japan", "Senegal").id();
+        scoreboard.finishMatch(matchId);
+
+        assertThatThrownBy(() -> scoreboard.updateScore(matchId, 1, 0))
+                .isInstanceOf(MatchNotFoundException.class)
+                .hasMessageContaining(matchId.toString());
+    }
+
+    @Test
+    @DisplayName("finishMatch on an already finished match throws MatchNotFoundException")
+    void shouldRejectSecondFinish() {
+        MatchId matchId = scoreboard.startMatch("Japan", "Senegal").id();
+        scoreboard.finishMatch(matchId);
+
+        assertThatThrownBy(() -> scoreboard.finishMatch(matchId))
+                .isInstanceOf(MatchNotFoundException.class)
+                .hasMessageContaining(matchId.toString());
     }
 }
