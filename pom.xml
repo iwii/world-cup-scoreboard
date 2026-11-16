@@ -19,7 +19,7 @@
 
         <junit.jupiter.version>5.11.4</junit.jupiter.version>
         <jacoco.version>0.8.12</jacoco.version>
-        <assertj.version>3.27.3</assertj.version>
+        <assertj.version>3.27.7</assertj.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>

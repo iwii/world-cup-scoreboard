@@ -183,7 +183,7 @@ class ScoreboardTest {
     @Test
     @DisplayName("Edge Case 2: Whitespace trimming and case-insensitivity on team names")
     void shouldTrimWhitespaceAndHandleCaseInsensitivity() {
-        // Given teams with spaces and mixed casing
+        // Given teams name with spaces and mixed casing
         MatchId matchId = scoreboard.startMatch("  Brazil  ", "ARGENTINA ").id();
 
         List<MatchSummary> summary = scoreboard.getSummary();
@@ -268,5 +268,19 @@ class ScoreboardTest {
         assertThatThrownBy(() -> scoreboard.finishMatch(matchId))
                 .isInstanceOf(MatchNotFoundException.class)
                 .hasMessageContaining(matchId.toString());
+    }
+
+    @Test
+    @DisplayName("updateScore throws NullPointerException when matchId is null")
+    void updateScoreShouldRejectNullMatchId() {
+        assertThatThrownBy(() -> scoreboard.updateScore(null, 1, 0))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("finishMatch throws NullPointerException when matchId is null")
+    void finishMatchShouldRejectNullMatchId() {
+        assertThatThrownBy(() -> scoreboard.finishMatch(null))
+                .isInstanceOf(NullPointerException.class);
     }
 }

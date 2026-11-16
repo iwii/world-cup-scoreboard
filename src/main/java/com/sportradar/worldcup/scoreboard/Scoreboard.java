@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 public class Scoreboard {
 
@@ -42,7 +41,6 @@ public class Scoreboard {
      * Updates absolute scores for a specific match under fine-grained per-match lock protection.
      */
     public MatchSummary updateScore(MatchId matchId, int team1Score, int team2Score) {
-        MatchSummary summary;
         Objects.requireNonNull(matchId, "matchId");
         validateScore(team1Score);
         validateScore(team2Score);
@@ -60,18 +58,16 @@ public class Scoreboard {
                 throw new MatchNotFoundException("Match not found or already finished with ID: " + matchId);
             }
             context.updateScores(team1Score, team2Score);
-            summary = context.toSummary();
+            return context.toSummary();
         } finally {
             context.lock.unlock();
         }
-        return summary;
     }
 
     /**
      * Finishes and removes a match from the scoreboard atomically under lock protection.
      */
     public MatchSummary finishMatch(MatchId matchId) {
-        MatchSummary summary;
         Objects.requireNonNull(matchId, "matchId");
 
         MatchContext context = matches.get(matchId);
@@ -85,11 +81,10 @@ public class Scoreboard {
             if (!matches.remove(matchId, context)) {
                 throw new MatchNotFoundException("Match not found or already finished with ID: " + matchId);
             }
-            summary = context.toSummary();
+            return context.toSummary();
         } finally {
             context.lock.unlock();
         }
-        return summary;
     }
 
     /**

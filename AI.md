@@ -32,6 +32,7 @@
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
      - [2.5.2 Test Hardening and Flakiness Fixes](#252-test-hardening-and-flakiness-fixes)
+     - [2.5.3 Defensive Branch Coverage and Dependency Security](#253-defensive-branch-coverage-and-dependency-security)
    - [2.6 AI Code Review and Refactoring](#26-ai-code-review-and-refactoring)
    - [2.7 Documentation Review](#27-documentation-review)
 3. [Human Review and Validation](#3-human-review-and-validation)
@@ -417,7 +418,64 @@ but harder to read; the `sleep`-based overlap window is sufficient for a
 task assignment, and `assertTrue(snapshotsTakenWhileWriting > 0)` already
 fails loudly if overlap does not occur.
 
+#### 2.5.3 Defensive Branch Coverage and Dependency Security
+
+**Prompt:** Two follow-ups after the first green build:
+1. JaCoCo reports missed branches in `updateScore` and `finishMatch` for the
+   `"Match not found or already finished with ID"` paths. These branches are
+   reachable only when the entry is removed between `matches.get(matchId)` and
+   the subsequent `lock()`, which cannot be triggered from a single thread.
+2. Dependabot flags `assertj-core` 3.27.3 for CVE-2026-24400 (XXE in
+   `isXmlEqualTo` / `xmlPrettyFormat`, fixed in 3.27.7). The library does not
+   use those methods and AssertJ is test-scoped, but the scanner still fails.
+
+**Context:** Implementation complete; `mvn clean verify` green; 80% line
+coverage threshold in place. The defensive branches in `Scoreboard` are
+intentionally unreachable in normal flow, but the coverage report still lists
+them as missed.
+
+**Outcome:**
+- **Refactor for testability:** extracted `getMatchContext(MatchId)` and
+  `removeMatchContext(MatchId, MatchContext)` in `Scoreboard` as package-private
+  methods. `updateScore` and `finishMatch` now call these helpers, so the
+  defensive branches can be exercised from a test without changing the public
+  API or adding test-only fields.
+- **`ScoreboardRaceConditionTest`:** covers both defensive branches by
+  overriding the helpers in an anonymous `Scoreboard` subclass:
+  - the first test makes the second `getMatchContext` call remove the entry
+    (simulating a concurrent `finishMatch` that won the race between `get` and
+    `lock`), which triggers `matches.get(matchId) != context`;
+  - the second test overrides `removeMatchContext` to remove the entry and
+    return `false`, which triggers `if (!removed)`.
+- **Null `MatchId` tests:** added `updateScore(null, ...)` and
+  `finishMatch(null)` tests to cover the `Objects.requireNonNull` branches;
+  without them the branch coverage for these two methods stayed at 75%.
+- **`assertj-core` bumped to 3.27.7** in `pom.xml` to address CVE-2026-24400.
+  The library never calls `isXmlEqualTo` or `xmlPrettyFormat`, but the bump
+  removes the scanner warning and keeps the build clean.
+
+**Remaining uncovered branch:** `startMatch` still has one missed branch – the
+`putIfAbsent` collision path in the `do { ... } while (matches.putIfAbsent(...) != null)`
+loop. The probability of a `UUID.randomUUID()` collision is negligible
+(~2^-122), so the branch is left uncovered and documented in the README
+under Trade-offs, rather than mocked via a `MatchId.random()` override.
+
+**Rejected:**
+- **Reflection-based tests:** a first attempt manipulated the private
+  `matches` map via reflection. It removed the entry *before* `getMatchContext`,
+  so the code took the `context == null` branch and threw
+  `"Match not found with ID"` instead of `"Match not found or already finished"`.
+  Replaced with the anonymous-subclass approach.
+- **Test-only hook field in `Scoreboard`:** adding a `Runnable beforeLockHook`
+  to production code was rejected – it leaks test concerns into the API.
+- **Excluding `Scoreboard` from JaCoCo:** would hide real coverage of
+  `updateScore`/`finishMatch`; not worth it for a single defensive branch.
+- **Mocking `MatchId.random()`:** would require Mockito (new dependency) and
+  would not test the real `startMatch` method.
+
 Results are verified with `mvn clean verify`.
+
+Results are always verified with `mvn clean verify`.
 
 ### 2.6 AI Code Review and Refactoring
 
@@ -463,8 +521,14 @@ All AI suggestions were reviewed before being incorporated. Suggestions I change
 8. Refactor team name validation to return trimmed strings directly.
 9. Change random() to package-private.
 10. `MatchId.fromString` wraps `IllegalArgumentException` in `InvalidMatchIdException`.
+11. Extracted `getMatchContext` / `removeMatchContext` in `Scoreboard` to make
+    the defensive "not found or already finished" branches testable.
+12. Added `ScoreboardRaceConditionTest` (anonymous `Scoreboard` subclass) and
+    null `MatchId` tests for `updateScore` and `finishMatch`.
+13. Bumped `assertj-core` to 3.27.7 to address CVE-2026-24400.
 
 Verification:
 - Verified with `mvn clean verify`: all tests pass, JaCoCo ≥ 80%.
 - `jar --describe-module` for the module name.
+- `mvn dependency:tree | grep assertj` shows `assertj-core:3.27.7:test`.
 - [To be completed after the implementation: tests reviewed by hand, results of the concurrency tests, known limitations.]
