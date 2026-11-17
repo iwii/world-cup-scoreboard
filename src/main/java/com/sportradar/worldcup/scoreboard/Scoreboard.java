@@ -4,19 +4,27 @@ import com.sportradar.worldcup.scoreboard.exception.*;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class Scoreboard {
+/**
+ * In-memory scoreboard of live Football World Cup matches.
+ *
+ * <p>Supports starting a match, updating its absolute score, finishing it and listing the matches
+ * in progress ordered by total score (descending) and, for equal totals, by most recently started first.
+ * Finished matches are removed; the library has no persistence and starts no background threads.
+ *
+ * <p><b>Thread-safety:</b> all public operations are thread-safe. Matches are kept in a
+ * {@link java.util.concurrent.ConcurrentHashMap} and operations on the same match are serialized by a
+ * per-match lock, while operations on different matches run concurrently. {@link #getSummary()} and
+ * {@link #getMatchesByTeam(String)} read each match consistently under its lock, but the returned list is
+ * not an atomic snapshot of the whole scoreboard: matches may change while it is being built.
+ * The class works with both platform and virtual threads.
+ */
+public final class Scoreboard {
 
-    // Thread-safe map storing active matches, offering lock-free concurrent structure access
-    private final ConcurrentHashMap<MatchId, MatchContext> matches = new ConcurrentHashMap<>();
-
-    // Monotonically increasing sequence generator for chronological tie-breaking
-    private final AtomicLong sequenceGenerator = new AtomicLong(0);
-
+    // Total score descending, then most recently started (highest sequence) first
     private static final Comparator<MatchContext.Snapshot> SNAPSHOT_ORDER =
             Comparator
                     .comparingLong((MatchContext.Snapshot s) ->
@@ -24,17 +32,25 @@ public class Scoreboard {
                     .thenComparing(Comparator.comparingLong(
                             MatchContext.Snapshot::sequence).reversed());
 
+    // Thread-safe map storing active matches, offering lock-free concurrent structure access
+    private final ConcurrentHashMap<MatchId, MatchContext> matches = new ConcurrentHashMap<>();
+
+    // Monotonically increasing sequence generator for chronological tie-breaking
+    private final AtomicLong sequenceGenerator = new AtomicLong(0);
+
     /**
      * Starts a new match with initial score 0-0 after validating and trimming team names.
      */
     public MatchSummary startMatch(String team1, String team2) {
-        String trimmed1 = validateTeamNameAndTrimmed(team1);
-        String trimmed2 = validateTeamNameAndTrimmed(team2);
+        String trimmed1 = validateTeamName(team1);
+        String trimmed2 = validateTeamName(team2);
 
         if (trimmed1.equalsIgnoreCase(trimmed2)) {
             throw new InvalidTeamException("A team cannot play against itself: " + trimmed1);
         }
 
+        // sequence is consumed even if putIfAbsent collides; monotonicity is preserved
+        // and a UUID collision is astronomically unlikely (~2^-122).
         long sequence = sequenceGenerator.incrementAndGet();
         MatchId matchId;
         MatchContext context;
@@ -100,40 +116,49 @@ public class Scoreboard {
      * Sorted primarily by total score descending, and secondarily by sequence number descending (newest first).
      */
     public List<MatchSummary> getSummary() {
-            return matches.values().stream()
-                    .map(MatchContext::toSnapshot)
-                    .sorted(SNAPSHOT_ORDER)
-                    .map(MatchContext.Snapshot::summary)
-                    .toList();
-        }
-
-    public List<MatchSummary> getMatchesByTeam(String team) {
-        String normalized = validateTeamNameAndTrimmed(team).toLowerCase(Locale.ROOT);
         return matches.values().stream()
-                .map(MatchContext::toSnapshot)              // ← snapshot pod lockiem
-                .filter(s -> matchesTeam(s.summary(), normalized))
+                .map(MatchContext::toSnapshot)
                 .sorted(SNAPSHOT_ORDER)
                 .map(MatchContext.Snapshot::summary)
                 .toList();
     }
 
-    private static boolean matchesTeam(MatchSummary summary, String normalizedTeam) {
-        return summary.team1().toLowerCase(Locale.ROOT).equals(normalizedTeam)
-                || summary.team2().toLowerCase(Locale.ROOT).equals(normalizedTeam);
+    /**
+     * Returns the matches in progress in which the given team plays, either as team1 or team2.
+     * The team name is trimmed and compared ignoring case, like in {@link #startMatch(String, String)}.
+     * The result has the same ordering as {@link #getSummary()} (total score descending, then most
+     * recently started first) and is an immutable list; it is empty when the team has no ongoing matches.
+     * Each match is read consistently, but the list is not an atomic snapshot of the whole scoreboard.
+     *
+     * @param team name of the team to look for
+     * @return immutable list of matching match summaries, possibly empty
+     * @throws InvalidTeamException if the team name is null, empty or blank
+     */
+    public List<MatchSummary> getMatchesByTeam(String team) {
+        String normalized = validateTeamName(team);
+        return matches.values().stream()
+                .filter(context -> involves(context, normalized))
+                .map(MatchContext::toSnapshot)
+                .sorted(SNAPSHOT_ORDER)
+                .map(MatchContext.Snapshot::summary)
+                .toList();
     }
 
-    private String validateTeamNameAndTrimmed(String teamName) {
+    // Team names are final, so they can be read without the match lock; unrelated matches are never locked
+    private static boolean involves(MatchContext context, String team) {
+        return context.team1.equalsIgnoreCase(team) || context.team2.equalsIgnoreCase(team);
+    }
+
+    private static String validateTeamName(String teamName) {
         if (teamName == null || teamName.trim().isEmpty()) {
             throw new InvalidTeamException("Team name cannot be null, empty or blank");
         }
         return teamName.trim();
     }
 
-    private void validateScore(int score) {
+    private static void validateScore(int score) {
         if (score < 0) {
             throw new InvalidScoreException("Score cannot be negative: " + score);
         }
     }
-
 }
-

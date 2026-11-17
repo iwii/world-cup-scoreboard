@@ -1,4 +1,3 @@
-
 package com.sportradar.worldcup.scoreboard;
 
 import com.sportradar.worldcup.scoreboard.exception.MatchNotFoundException;
@@ -19,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ScoreboardConcurrencyTest {
 
     private static final int THREADS = 32;
+    private static final int READERS = 4;
     private static final long TIMEOUT_SECONDS = 10;
 
     private final Scoreboard scoreboard = new Scoreboard();
@@ -271,15 +271,24 @@ class ScoreboardConcurrencyTest {
                 .collect(Collectors.toMap(ids::get, i -> i));
 
         CountDownLatch writersDone = new CountDownLatch(THREADS);
+        // Counted down by each reader after its first snapshot: writers start only once all readers are running.
+        // This guarantees overlap without relying on wall-clock timing or Thread.sleep.
+        CountDownLatch readersStarted = new CountDownLatch(READERS);
+        // Counted down by the first applied update: marks the beginning of the write phase.
+        CountDownLatch writingStarted = new CountDownLatch(1);
         AtomicInteger snapshotsTakenWhileWriting = new AtomicInteger();
 
         List<Callable<Void>> writeTasks = IntStream.range(0, THREADS)
                 .<Callable<Void>>mapToObj(index -> () -> {
                     try {
+                        // Wait until every reader has taken at least one snapshot,
+                        // so that readers are guaranteed to be running before any write happens.
+                        assertTrue(readersStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                                "Readers did not start");
                         MatchId id = ids.get(index);
                         for (int score = 1; score <= 500; score++) {
                             scoreboard.updateScore(id, score, score);
-                            if(score % 100 == 0) Thread.yield();
+                            writingStarted.countDown();
                         }
                         return null;
                     } finally {
@@ -288,17 +297,25 @@ class ScoreboardConcurrencyTest {
                 })
                 .toList();
 
-        List<Callable<Void>> readTasks = IntStream.range(0, 4)
+        List<Callable<Void>> readTasks = IntStream.range(0, READERS)
                 .<Callable<Void>>mapToObj(index -> () -> {
+                    boolean firstSnapshot = true;
                     do {
+                        // A snapshot overlaps the write phase if writing had started before it
+                        // and was still not finished after it.
+                        boolean writingHadStarted = writingStarted.getCount() == 0;
                         List<MatchSummary> snapshot = scoreboard.getSummary();
-                        boolean writersWereStillRunning = writersDone.getCount() > 0;
+                        boolean writersStillRunning = writersDone.getCount() > 0;
 
                         assertEquals(THREADS, snapshot.size());
                         assertConsistentSnapshot(snapshot, startIndex);
 
-                        if (writersWereStillRunning) {
+                        if (writingHadStarted && writersStillRunning) {
                             snapshotsTakenWhileWriting.incrementAndGet();
+                        }
+                        if (firstSnapshot) {
+                            readersStarted.countDown();
+                            firstSnapshot = false;
                         }
                     } while (writersDone.getCount() > 0);
                     return null;

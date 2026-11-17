@@ -29,6 +29,7 @@
      - [2.4.5 Core Business Logic and Concurrency Implementation](#245-core-business-logic-and-concurrency-implementation)
      - [2.4.6 Exception Handling and Validation Unit Tests](#246-exception-handling-and-validation-unit-tests)
      - [2.4.7 API Encapsulation and Access Modifier Refinement](#247-api-encapsulation-and-access-modifier-refinement)
+     - [2.4.8 Additional Query Operation](#248-additional-query-operation)
    - [2.5 Testing](#25-testing)
      - [2.5.1 Test Scenarios and Validation Strategy](#251-test-scenarios-and-validation-strategy)
      - [2.5.2 Test Hardening and Flakiness Fixes](#252-test-hardening-and-flakiness-fixes)
@@ -39,7 +40,12 @@
 
 ## 1. AI Tool Usage Summary
 
-Tool: Claude (Anthropic), used through the chat interface, model/version: Sonnet 5.5 Medium and ChatGPT version 6.
+Tools: 
+- Claude (Anthropic) Sonnet 5.5 Medium; 
+- ChatGPT-6 (OpenAI);
+- Gemini 4 (Google);
+- DeepSeek-V4.1-Flash;
+All used through the chat interface.
 
 AI was used as a supporting tool for:
 - Development environment and build setup (.gitignore, pom.xml, Maven in IntelliJ)
@@ -78,6 +84,8 @@ Prompts are listed in English translation. In sections 2.2 and 2.3 the prompts a
 - `junit-platform-launcher` left commented out until `mvn clean verify` shows whether it is needed.
 
 Open item: verify the plugin versions with `mvn versions:display-plugin-updates`.
+
+**Status: [ADOPTED, with changes].** The initial template used JUnit 6.1.2 and JaCoCo 0.8.15, but the build failed with unresolved dependencies for these versions on Java 21. I switched to JUnit 5.11.4 and JaCoCo 0.8.12, which are the versions verified to work with Java 21 and the `junit-bom` already in the project. `pom.xml` and README now pin these versions.
 
 #### 2.1.3 Using Homebrew Maven in IntelliJ
 
@@ -249,7 +257,7 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 
 ### 2.4 Implementation
 
-## 2.4.1 Base Domain Model and TDD Stubs Setup
+#### 2.4.1 Base Domain Model and TDD Stubs Setup
 
 **Prompt:** Define the minimal base domain structures, value objects, records, stub facade, and exception hierarchy required to establish the "red phase" of TDD for the World Cup Scoreboard library.
 
@@ -259,7 +267,7 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 - **`MatchId` Value Object:** A record wrapping `java.util.UUID` with a compact constructor for null-safety validation, a `random()` factory method for internal ID generation, a `fromString()` parsing helper, and an overridden `toString()` returning a clean raw UUID string for readable logging.
 - **`MatchSummary` Record:** An immutable data transfer object holding the state of a match (`id`, `team1`, `team2`, `team1Score`, `team2Score`) returned by the scoreboard API.
 - **`Scoreboard` Facade Stubs:** The main entry point exposing public operations (`startMatch`, `updateScore`, `finishMatch`, `getSummary`), initially implemented as stubs throwing `UnsupportedOperationException`.
-- **Domain Exception Hierarchy:** A dedicated unchecked exception structure rooted in `ScoreboardException`, containing specific runtime domain errors: `MatchNotFoundException`, `MatchAlreadyExistsException`, `InvalidScoreException`, and `InvalidTeamException`.
+- **Domain Exception Hierarchy:** A dedicated unchecked exception structure rooted in `ScoreboardException`, containing specific runtime domain errors: `MatchNotFoundException`, `InvalidScoreException`, and `InvalidTeamException`.
 
 **Rejected:** Using raw `String` primitives for identifiers (avoiding primitive obsession) and implementing full business logic before writing unit tests, in order to strictly adhere to the TDD methodology.
 
@@ -294,7 +302,7 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 
 **Context:** Having established baseline lifecycle tests, the library must be stress-tested against concurrency hazards, edge formatting issues, and complex domain state transitions to guarantee enterprise robustness.
 
-**Outcome:** Created `ScoreboardEdgeCasesTest` covering:
+**Outcome:** Created `ScoreboardTest`, `ScoreboardConcurrencyTest` and `ScoreboardRaceConditionTest` covering:
 - **Concurrency / Race Conditions:** Using `CountDownLatch` and multi-threading (`ExecutorService`) to simulate simultaneous `finishMatch` and `updateScore` execution on the same match ID, proving safety against dead/removed matches.
 - **Whitespace and Normalization:** Verifying that teams passed with leading/trailing spaces are correctly trimmed, and matching rules properly reject self-play regardless of casing or padding.
 - **Collision Resilience:** Ensuring atomic insertion logic prevents ID overwrite.
@@ -309,12 +317,14 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 **Context:** Following the red phase of TDD and test suite establishment, the system requires production code that fulfills all functional and non-functional requirements without external dependencies, guaranteeing thread safety under high concurrency and accurate sorting semantics.
 
 **Outcome:** Implemented:
-- **`MatchContext` Domain Model:** Encapsulating match state, scores, the authoritative `sequenceNumber` (from `MatchSummary`), and a dedicated `ReentrantLock` to serialize updates and removals per match.
-- **`Scoreboard` Facade:** 
+- `MatchContext`: Encapsulates match state, scores, an internal sequenceNumber and a dedicated ReentrantLock.
+- `Scoreboard`: Provides the public API and coordinates operations on the match registry:
   - `startMatch`: Validates and trims team names, ensures teams do not play against themselves (case-insensitively), assigns a monotonic sequence number, and safely registers matches using `putIfAbsent`.
   - `updateScore`: Validates non-negative scores, acquires the match lock, verifies exact instance identity post-lock (`matches.get(matchId) != context`), and updates absolute scores (supporting VAR corrections).
   - `finishMatch`: Safely removes the match from the registry under lock protection using atomic conditional removal (`matches.remove(matchId, context)`), preventing race conditions with concurrent updates.
   - `getSummary`: Streams active matches, mapping them to `MatchSummary` and sorting them primarily by total score descending, and secondarily by `sequenceNumber` descending (newest first).
+
+**Status: [ADOPTED, with changes].** The prompt above still treats `sequenceNumber` as part of `MatchSummary`, and the first implementation did the same: the public record carried the sequence and `getSummary` sorted on that field. I dropped that later (see 2.6 and 3.1 item 1). The tie-break is an internal detail, not something a client should see or depend on, so the field does not belong in the object returned by the API. The sequence now lives only on `MatchContext`. For sorting, `toSnapshot()` builds a package-private `Snapshot` that pairs the public `MatchSummary` with that sequence; the list returned to the client is still only `MatchSummary`. Ordering is unchanged: total score descending, then the highest sequence first.
 
 #### 2.4.6 Exception Handling and Validation Unit Tests
 
@@ -322,7 +332,7 @@ Based on the transition from Part I to Part II, please evaluate this simplified 
 
 **Context:** Following core implementation, the library must guarantee defensive programming and precise exception throwing (`InvalidTeamException`, `InvalidScoreException`, `MatchNotFoundException`, and `IllegalArgumentException`) to maintain domain invariants and safe failure modes under invalid client input or concurrency races.
 
-**Outcome:** Created `ScoreboardExceptionsTest` covering:
+**Outcome:** Created `ScoreboardTest` covering:
 - **Team Validation & Self-Play:** Ensuring null, empty, or whitespace-only team names are rejected, and teams cannot play against themselves regardless of casing or padding.
 - **Score Validation:** Ensuring negative scores throw `InvalidScoreException`.
 - **Match Lifecycle Faults:** Verifying that updating or finishing a null `MatchId`, a non-existent match, or a match that has already been finished throws `MatchNotFoundException` or `IllegalArgumentException`. Later changed to Objects.requireNonNull (NPE) – see 3.1.
@@ -387,120 +397,57 @@ For each scenario, describe the expected result and recommend a testing approach
 
 #### 2.5.2 Test Hardening and Flakiness Fixes
 
-**Prompt:** The first full `mvn clean verify` run failed on several tests. Help
-diagnose and fix:
-1. `ScoreboardTest.shouldOrderSummaryCorrectly` – asserts `MatchId` against
-   `MatchSummary`, and the comment "matches started sequentially with time gaps"
-   suggests reliance on wall-clock timing even though the tie-breaker is
-   `sequenceNumber`.
-2. `ScoreboardConcurrencyTest.summaryReadDuringConcurrentUpdatesIsAlwaysConsistent`
-   – fails intermittently with "readers never overlapped with writers".
-3. `ScoreboardConcurrencyTest.updateRacingWithFinishHasOnlyTwoValidOutcomes` – a
-   local `Scoreboard scoreboard = new Scoreboard()` shadows the field.
-4. `ScoreboardTest` – a large commented-out block of duplicate tests remains
-   at the bottom of the file.
+**Prompt:** The first full `mvn clean verify` run failed on several tests. Help diagnose and fix:
+1. `ScoreboardTest.shouldOrderSummaryCorrectly` – asserts `MatchId` against `MatchSummary`, and the comment "matches started sequentially with time gaps" suggests reliance on wall-clock timing even though the tie-breaker is `sequenceNumber`.
+2. `ScoreboardConcurrencyTest.summaryReadDuringConcurrentUpdatesIsAlwaysConsistent` – fails intermittently with "readers never overlapped with writers".
+3. `ScoreboardConcurrencyTest.updateRacingWithFinishHasOnlyTwoValidOutcomes` – a local `Scoreboard scoreboard = new Scoreboard()` shadows the field.
+4. `ScoreboardTest` – a large commented-out block of duplicate tests remains at the bottom of the file.
 
-**Context:** Implementation complete; tests green except the above. Local
-machine: M5 with 18 cores, but CI runs on 2–4 cores. In the concurrency test,
-the write loop runs 50 iterations per writer with only one `Thread.yield()`
-at the very end (`score % 50 == 0`), while the final assertion expects
-`team1Score == 500` – a deterministic mismatch independent of any race.
+**Context:** Implementation complete; tests green except the above. Local machine: M5 with 18 cores, but CI runs on 2–4 cores. In the concurrency test, the write loop runs 50 iterations per writer with only one `Thread.yield()` at the very end (`score % 50 == 0`), while the final assertion expects `team1Score == 500` – a deterministic mismatch independent of any race.
 
 **Outcome:**
-- **`shouldOrderSummaryCorrectly`:** replaced `MatchSummary matchN` with
-  `MatchId matchN = scoreboard.startMatch(...).id()` so `isEqualTo(matchN)`
-  compares `MatchId` to `MatchId`; removed the "time gaps" comment and
-  replaced it with an explicit note that ordering depends on `sequenceNumber`,
-  not the wall clock.
+- **`shouldOrderSummaryCorrectly`:** replaced `MatchSummary matchN` with `MatchId matchN = scoreboard.startMatch(...).id()` so `isEqualTo(matchN)` compares `MatchId` to `MatchId`; removed the "time gaps" comment and replaced it with an explicit note that ordering depends on `sequenceNumber`, not the wall clock.
 - **`summaryReadDuringConcurrentUpdatesIsAlwaysConsistent`:**
-  - fixed the assertion/loop mismatch (`== 500` vs. `<= 50`) by changing
-    the loop to `score <= 500`;
-  - moved `Thread.yield()` from firing once at `score == 50` to firing
-    every 50 iterations (10 times per writer);
-  - added `Thread.sleep(1)` every 100 iterations so that writers actually
-    live long enough for readers to overlap: on an 18-core M5 with 32
-    writers, writers finish in microseconds and readers enter the
-    `do` loop only after `writersDone.countDown()` has already hit zero;
-  - re-ran the test 20 times without a single failure (previously flaky
-    on 18 cores, deterministic failure on 2-core CI due to the 500 vs. 50
-    mismatch).
-- **`updateRacingWithFinishHasOnlyTwoValidOutcomes`:** renamed the local
-  `scoreboard` to `localScoreboard` so it no longer shadows the test field.
-- **`ScoreboardTest`:** removed the commented-out block (it duplicated
-  active tests: invalid team names, self-play, null `MatchId`, negative
-  scores, missing/finished matches). Coverage from `ScoreboardTest` and
-  `ScoreboardConcurrencyTest` is unaffected.
+  - fixed the assertion/loop mismatch (`== 500` vs. `<= 50`) by changing the loop to `score <= 500`;
+  - moved `Thread.yield()` from firing once at `score == 50` to firing every 50 iterations (10 times per writer);
+  - re-ran the test 20 times without a single failure (previously flaky on 18 cores, deterministic failure on 2-core CI due to the 500 vs. 50 mismatch).
+  - the `Thread.sleep` overlap window from this pass was replaced later: the final test uses two `CountDownLatch`es instead of sleeping (see the follow-up review in 2.6). `readersStarted` blocks the writers until every reader has taken its first snapshot, so readers are already running when updates begin. `writingStarted` is counted down by the first applied update, and a snapshot counts as overlap only if writing had started before it and had not finished after it. That keeps `snapshotsTakenWhileWriting > 0` from passing on the pre-write snapshot.
+- **`ScoreboardTest`:** removed the commented-out block (it duplicated active tests: invalid team names, self-play, null `MatchId`, negative scores, missing/finished matches). Coverage from `ScoreboardTest` and `ScoreboardConcurrencyTest` is unaffected.
 
-**Rejected:** replacing `CountDownLatch` with `Phaser` to force true phase
-synchronization between readers and writers. It would be fully deterministic
-but harder to read; the `sleep`-based overlap window is sufficient for a
-task assignment, and `assertTrue(snapshotsTakenWhileWriting > 0)` already
-fails loudly if overlap does not occur.
+**Rejected:** replacing `CountDownLatch` with `Phaser` to force true phase synchronization between readers and writers. It would be fully deterministic but harder to read; the `sleep`-based overlap window is sufficient for a task assignment, and `assertTrue(snapshotsTakenWhileWriting > 0)` already fails loudly if overlap does not occur.
 
 #### 2.5.3 Defensive Branch Coverage and Dependency Security
 
 **Prompt:** Two follow-ups after the first green build:
-1. JaCoCo reports missed branches in `updateScore` and `finishMatch` for the
-   `"Match not found or already finished with ID"` paths. These branches are
-   reachable only when the entry is removed between `matches.get(matchId)` and
-   the subsequent `lock()`, which cannot be triggered from a single thread.
-2. Dependabot flags `assertj-core` 3.27.3 for CVE-2026-24400 (XXE in
-   `isXmlEqualTo` / `xmlPrettyFormat`, fixed in 3.27.7). The library does not
-   use those methods and AssertJ is test-scoped, but the scanner still fails.
+1. JaCoCo reports missed branches in `updateScore` and `finishMatch` for the `"Match not found or already finished with ID"` paths. These branches are reachable only when the entry is removed between `matches.get(matchId)` and the subsequent `lock()`, which cannot be triggered from a single thread.
+2. Dependabot flags `assertj-core` 3.27.3 for CVE-2026-24400 (XXE in `isXmlEqualTo` / `xmlPrettyFormat`, fixed in 3.27.7). The library does not use those methods and AssertJ is test-scoped, but the scanner still fails.
 
-**Context:** Implementation complete; `mvn clean verify` green; 80% line
-coverage threshold in place. The defensive branches in `Scoreboard` are
-intentionally unreachable in normal flow, but the coverage report still lists
-them as missed.
+**Context:** Implementation complete; `mvn clean verify` green; 80% line coverage threshold in place. The defensive branches in `Scoreboard` are intentionally unreachable in normal flow, but the coverage report still lists them as missed.
 
 **Outcome:**
-- **Refactor for testability:** extracted `getMatchContext(MatchId)` and
-  `removeMatchContext(MatchId, MatchContext)` in `Scoreboard` as package-private
-  methods. `updateScore` and `finishMatch` now call these helpers, so the
-  defensive branches can be exercised from a test without changing the public
-  API or adding test-only fields.
-- **`ScoreboardRaceConditionTest`:** covers both defensive branches by
-  overriding the helpers in an anonymous `Scoreboard` subclass:
-  - the first test makes the second `getMatchContext` call remove the entry
-    (simulating a concurrent `finishMatch` that won the race between `get` and
-    `lock`), which triggers `matches.get(matchId) != context`;
-  - the second test overrides `removeMatchContext` to remove the entry and
-    return `false`, which triggers `if (!removed)`.
-- **Null `MatchId` tests:** added `updateScore(null, ...)` and
-  `finishMatch(null)` tests to cover the `Objects.requireNonNull` branches;
-  without them the branch coverage for these two methods stayed at 75%.
-- **`assertj-core` bumped to 3.27.7** in `pom.xml` to address CVE-2026-24400.
-  The library never calls `isXmlEqualTo` or `xmlPrettyFormat`, but the bump
-  removes the scanner warning and keeps the build clean.
+- **Refactor for testability:** extracted `getMatchContext(MatchId)` and `removeMatchContext(MatchId, MatchContext)` in `Scoreboard` as package-private methods. `updateScore` and `finishMatch` now call these helpers, so the
+  defensive branches can be exercised from a test without changing the public API or adding test-only fields.
+- **`ScoreboardRaceConditionTest`:** covers both defensive branches by overriding the helpers in an anonymous `Scoreboard` subclass:
+  - the first test makes the second `getMatchContext` call remove the entry (simulating a concurrent `finishMatch` that won the race between `get` and `lock`), which triggers `matches.get(matchId) != context`;
+  - the second test overrides `removeMatchContext` to remove the entry and return `false`, which triggers `if (!removed)`.
+- **Null `MatchId` tests:** added `updateScore(null, ...)` and `finishMatch(null)` tests to cover the `Objects.requireNonNull` branches; without them the branch coverage for these two methods stayed at 75%.
+- **`assertj-core` bumped to 3.27.7** in `pom.xml` to address CVE-2026-24400. The library never calls `isXmlEqualTo` or `xmlPrettyFormat`, but the bump removes the scanner warning and keeps the build clean.
 
-**Remaining uncovered branch:** `startMatch` still has one missed branch – the
-`putIfAbsent` collision path in the `do { ... } while (matches.putIfAbsent(...) != null)`
-loop. The probability of a `UUID.randomUUID()` collision is negligible
-(~2^-122), so the branch is left uncovered and documented in the README
-under Trade-offs, rather than mocked via a `MatchId.random()` override.
+**Remaining uncovered branch:** `startMatch` still has one missed branch – the `putIfAbsent` collision path in the `do { ... } while (matches.putIfAbsent(...) != null)` loop. The probability of a `UUID.randomUUID()` collision is negligible (~2^-122), so the branch is left uncovered and documented in the README under Trade-offs, rather than mocked via a `MatchId.random()` override.
 
 **Rejected:**
-- **Reflection-based tests:** a first attempt manipulated the private
-  `matches` map via reflection. It removed the entry *before* `getMatchContext`,
-  so the code took the `context == null` branch and threw
-  `"Match not found with ID"` instead of `"Match not found or already finished"`.
-  Replaced with the anonymous-subclass approach.
-- **Test-only hook field in `Scoreboard`:** adding a `Runnable beforeLockHook`
-  to production code was rejected – it leaks test concerns into the API.
-- **Excluding `Scoreboard` from JaCoCo:** would hide real coverage of
-  `updateScore`/`finishMatch`; not worth it for a single defensive branch.
-- **Mocking `MatchId.random()`:** would require Mockito (new dependency) and
-  would not test the real `startMatch` method.
+- **Reflection-based tests:** a first attempt manipulated the private `matches` map via reflection. It removed the entry *before* `getMatchContext`, so the code took the `context == null` branch and threw `"Match not found with ID"` instead of `"Match not found or already finished"`. Replaced with the anonymous-subclass approach.
+- **Test-only hook field in `Scoreboard`:** adding a `Runnable beforeLockHook` to production code was rejected – it leaks test concerns into the API.
+- **Excluding `Scoreboard` from JaCoCo:** would hide real coverage of `updateScore`/`finishMatch`; not worth it for a single defensive branch.
+- **Mocking `MatchId.random()`:** would require Mockito (new dependency) and would not test the real `startMatch` method.
+
+**Status: [ADOPTED, with changes].** The `assertj-core` bump and the null `MatchId` tests were adopted unchanged. The testability refactor (`getMatchContext` / `removeMatchContext` and the anonymous `Scoreboard` subclass) was **[SUPERSEDED by 2.6]**: the helpers were removed from `Scoreboard`, so the production code has no test-only seams. `ScoreboardRaceConditionTest` now forces the race window deterministically instead: the test holds the match lock, a worker thread starts `updateScore` / `finishMatch` and blocks on that lock, and once the worker is queued the test removes the entry from the registry and releases the lock. The test uses reflection only to reach the private `matches` map at that moment. This differs from the rejected first attempt, which removed the entry before the call, and the assertion on the "already finished" message proves that the defensive branch fired.
 
 Results are verified with `mvn clean verify`.
 
-Results are always verified with `mvn clean verify`.
-
 ### 2.6 AI Code Review and Refactoring
 
-**Prompt:** Review the implementation of `Scoreboard`, `MatchContext` and
-`MatchSummary` for thread-safety, correctness and API consistency with the
-README. Point out races, overflow risks and documentation drift.
+**Prompt:** Review the implementation of `Scoreboard`, `MatchContext` and `MatchSummary` for thread-safety, correctness and API consistency with the README. Point out races, overflow risks and documentation drift.
 
 **Context:** Implementation complete; tests green.
 
@@ -511,8 +458,99 @@ README. Point out races, overflow risks and documentation drift.
 - `sequenceNumber` still exposed in `MatchSummary`, contrary to README.
 - `MatchContext` as a private inner class – extract to top-level.
 
-**Rejected:** AI suggested adding `equals`/`hashCode` to `MatchContext`;
-rejected – identity is by `MatchId`, and `MatchContext` never leaves the library.
+**Rejected:** AI suggested adding `equals`/`hashCode` to `MatchContext`; rejected – identity is by `MatchId`, and `MatchContext` never leaves the library.
+
+### Code review of the finished project
+
+**Prompt:** Please perform a code review of the attached project as a senior Java reviewer. It is a solution to the coding exercise "Live Football World Cup Scoreboard" (Java 21, Maven library, no production dependencies).
+
+Assignment requirements:
+- Operations: start a match, update the score, finish a match, get a summary of matches in progress
+  (ordered by total score descending, ties: most recently started first), plus exactly ONE additional operation
+  (mine: getMatchesByTeam) introduced in a distinct commit and explained in the README.
+- Deliverables: Maven project, README.md (assumptions, reasoning, trade-offs), AI.md (AI usage, prompt history).
+- Example scenario: Mexico 0-5 Canada, Spain 10-2 Brazil, Germany 2-2 France, Uruguay 6-6 Italy, Argentina 3-1 Australia
+  -> Uruguay, Spain, Mexico, Argentina, Germany.
+
+Design in brief: ConcurrentHashMap<MatchId, MatchContext>, per-match ReentrantLock, identity check under the lock,
+immutable records MatchId/MatchSummary, library-generated UUID ids, finished matches are removed,
+getSummary is weakly consistent across matches, multi-source/duplicate-update handling is out of scope.
+
+**Context:** Already fixed since the previous review (please verify, do not just trust):
+- JUnit/JaCoCo versions aligned between pom.xml, README and AI.md; fixed the #5-design-decisions anchor.
+- Removed getMatch(...) from the README usage (only one additional operation is allowed).
+- Removed the AI.md placeholder, the duplicated "- -" bullet and the duplicated UUID-collision trade-off.
+- Trade-off now refers to ConcurrentHashMap (O(1) average lookups, O(n log n) sorting per summary).
+- ScoreboardException has a (String, Throwable) constructor; added serialVersionUID to all exceptions.
+- Renamed validateTeamNameAndTrimmed; getMatchesByTeam now uses equalsIgnoreCase like startMatch.
+- Removed a redundant test and a Polish comment; removed the unused MatchAlreadyExistsException.
+- ScoreboardRaceConditionTest rewritten: it holds the match lock, waits for the worker to queue on it, removes
+  the entry and releases the lock, so the "already finished" defensive branches are covered deterministically.
+- Added tests: assignment example scenario, empty summary, immutable getSummary list, snapshot-not-live-view,
+  Integer.MAX_VALUE scores (long total), returned summaries of updateScore/finishMatch, MatchId.toString.
+- Added English comments to MatchContext and class-level Javadoc to Scoreboard (thread-safety), MatchSummary, MatchId.
+
+Please review and report by priority (must fix / should fix / optional):
+1. Correctness and thread-safety (races, deadlocks, visibility, ordering guarantees).
+2. Compliance with the assignment and consistency between code, tests, README and AI.md.
+3. Test quality: coverage of requirements and edge cases, flakiness, duplicated or misleading tests.
+4. API design, encapsulation, naming, Javadoc, exception design.
+5. pom.xml and build configuration.
+
+For every finding give file, location, reason and a concrete suggested fix. Do not change logic yourself;
+show proposed changes and the reason first. Do not report style preferences as defects.
+
+**Outcome:**
+The review confirmed the core design (per-match lock, immutable records, deadlock-free locking,
+`finishMatch` returning a consistent final summary) and found problems mostly in tests and documentation.
+
+Applied after my own evaluation:
+- README: removed `getMatch(...)` from the usage example (the assignment allows exactly one additional
+  operation, and `getMatch` was my first idea), fixed the broken anchors, typos and duplicated trade-off bullets. Changed the
+  `HashMap` trade-off to `ConcurrentHashMap` (O(1) average lookups, O(n log n) sorting per summary).
+- Aligned the JUnit and JaCoCo versions between `pom.xml`, README and AI.md; removed the AI.md placeholder.
+- `ScoreboardRaceConditionTest` did not cover the branches it claimed to: it removed the match before
+  the call, so only the plain "Match not found" check fired. Rewritten deterministically: the test holds the
+  match lock, waits until a worker thread is queued on it, removes the entry and releases the lock, so the
+  "already finished" defensive branches are covered and asserted by message.
+- Added tests: the example scenario from the assignment, empty summary, immutable `getSummary` list,
+  snapshot-not-live-view, `Integer.MAX_VALUE` scores (total is `long`), returned summaries of
+  `updateScore` / `finishMatch`, `MatchId.toString`.
+- Added comments to `MatchContext` and class-level Javadoc to `Scoreboard` (including thread-safety),
+  `MatchSummary` and `MatchId`.
+- Removed the unused `MatchAlreadyExistsException`: ids are generated by the library and a UUID collision is
+  handled by the retry loop, so the exception could never be thrown.
+- `getMatchesByTeam` now uses `equalsIgnoreCase`, consistent with `startMatch`; renamed
+  `validateTeamNameAndTrimmed`; `ScoreboardException` got a `(String, Throwable)` constructor;
+  removed a redundant test and a Polish comment.
+
+Evaluated and decided:
+- `getSummary` / `getMatchesByTeam` stay weakly consistent across matches. Making the snapshot atomic would
+  need a global read/write lock or copy-on-write state, which would stop or serialize updates, while matches
+  are independent and a scoreboard is stale at display time anyway. Documented in README and Javadoc.
+- `serialVersionUID` added to the exceptions as library hygiene (exceptions are `Serializable`);
+  nothing in this project serializes them, so the practical benefit is small. I kept it because it is harmless and avoids lint warnings.
+
+Not applied: making the summary an atomic snapshot (see the decision above). The optional items of this
+review (the possibly flaky `snapshotsTakenWhileWriting > 0` assertion, micro-optimisations in
+`getMatchesByTeam`, small style points in `Scoreboard`) were handled in the follow-up review below.
+
+### Follow-up code review
+
+**Prompt:** I applied your fixes. Do the code review again and tell me whether I missed anything.
+
+**Context:** Updated code, tests, README, AI.md and `pom.xml`, compared again with the assignment and with the previous review.
+
+**Outcome:** The second pass found no correctness or thread-safety problems in the production code; the findings were in documentation, tests and build settings.
+
+Applied after my own evaluation:
+- `AI.md`: filled the open placeholders of the previous entry, marked the race-test refactor in 2.5.3 and items 11-12 of 3.1 as superseded, replaced the unverified ChatGPT version in section 1, added the missing 2.4.8 entry to the table of contents and confirmed that 2.3.1 already carries a status line.
+- `MatchIdTest`: added `@DisplayName` to every test.
+- `Scoreboard.getMatchesByTeam`: added Javadoc, and it now filters by the (final) team names before taking snapshots, so matches of other teams are never locked.
+- `Scoreboard`: the class is `final`, the `validate*` helpers are `static` and the comparator constant is declared before the instance fields.
+- Flaky assertion in `summaryReadDuringConcurrentUpdatesIsAlwaysConsistent`: readers now take their first snapshot before the writers start (`readersStarted` latch). The reviewer suggested only that latch, but then the counter `snapshotsTakenWhileWriting` would already be true before any write happened, so I added a second latch (`writingStarted`) and count a snapshot only if writing had started before it and was not finished after it.
+- New test: the same teams may play several ongoing matches, each with its own id (an assumption from the README that was only covered indirectly).
+- `pom.xml`: `-Xlint:all` in `maven-compiler-plugin`, so compiler warnings (for example about `serial`) are visible.
 
 ### 2.7 Documentation Review
 
@@ -541,12 +579,20 @@ All AI suggestions were reviewed before being incorporated. Suggestions I change
 9. Change random() to package-private.
 10. `MatchId.fromString` wraps `IllegalArgumentException` in `InvalidMatchIdException`.
 11. Extracted `getMatchContext` / `removeMatchContext` in `Scoreboard` to make
-    the defensive "not found or already finished" branches testable.
-12. Added `ScoreboardRaceConditionTest` (anonymous `Scoreboard` subclass) and
-    null `MatchId` tests for `updateScore` and `finishMatch`.
+    the defensive "not found or already finished" branches testable. Removed again later
+    (see 2.5.3 and 2.6): the production code has no test-only seams.
+12. Added `ScoreboardRaceConditionTest` and null `MatchId` tests for `updateScore` and `finishMatch`.
+    The first version used an anonymous `Scoreboard` subclass; the final version holds the match lock and
+    removes the entry while a worker thread is queued on it (see 2.5.3).
 13. Bumped `assertj-core` to 3.27.7 to address CVE-2026-24400.
 14. Added `getMatchesByTeam(String team)` as the single additional operation;
     README explains why it covers both "by team" and "by ID" use cases and why `getMatch(MatchId)` was not added as a second public method.
+15. Removed the unused `MatchAlreadyExistsException`.
+16. `getMatchesByTeam` filters by team name before locking and snapshotting matches; added its Javadoc.
+17. `Scoreboard` made `final`; `validate*` helpers made `static`; comparator constant moved above the instance fields.
+18. Hardened the snapshot-overlap check in `summaryReadDuringConcurrentUpdatesIsAlwaysConsistent` with two latches.
+19. Added a test for the same teams in several ongoing matches and `@DisplayName` for all `MatchIdTest` tests.
+20. Added `-Xlint:all` to `maven-compiler-plugin`.
 
 Verification:
 - Verified with `mvn clean verify`: all tests pass, JaCoCo ≥ 80%.

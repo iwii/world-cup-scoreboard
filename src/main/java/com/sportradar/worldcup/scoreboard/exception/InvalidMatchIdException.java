@@ -1,8 +1,13 @@
 package com.sportradar.worldcup.scoreboard.exception;
 
 public class InvalidMatchIdException extends ScoreboardException {
-    public InvalidMatchIdException(String message, IllegalArgumentException e) {
+    private static final long serialVersionUID = 1L;
+
+    public InvalidMatchIdException(String message) {
         super(message);
-        initCause(e);
+    }
+
+    public InvalidMatchIdException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

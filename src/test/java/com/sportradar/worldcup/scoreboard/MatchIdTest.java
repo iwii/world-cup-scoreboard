@@ -44,4 +44,34 @@ class MatchIdTest {
                 .isInstanceOf(InvalidMatchIdException.class)
                 .hasCauseInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("random should return a non-null id wrapping a non-null UUID")
+    void randomShouldReturnNonNullId() {
+        assertThat(MatchId.random()).isNotNull();
+        assertThat(MatchId.random().value()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("random should return a different id on each call")
+    void randomShouldReturnDifferentIdsOnEachCall() {
+        assertThat(MatchId.random()).isNotEqualTo(MatchId.random());
+    }
+
+    @Test
+    @DisplayName("random id should survive a round trip through toString and fromString")
+    void randomIdShouldSurviveRoundTripThroughString() {
+        MatchId id = MatchId.random();
+
+        assertThat(MatchId.fromString(id.toString())).isEqualTo(id);
+    }
+
+    @Test
+    @DisplayName("toString should return the canonical UUID string")
+    void toStringShouldReturnUuidString() {
+        UUID uuid = UUID.randomUUID();
+
+        assertThat(new MatchId(uuid)).hasToString(uuid.toString());
+    }
+
 }

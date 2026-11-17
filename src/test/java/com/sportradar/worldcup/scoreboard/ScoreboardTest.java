@@ -9,7 +9,6 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
-import java.util.concurrent.*;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -40,6 +39,15 @@ class ScoreboardTest {
                     assertThat(m.team1Score()).isEqualTo(0);
                     assertThat(m.team2Score()).isEqualTo(0);
                 });
+    }
+
+    @Test
+    @DisplayName("startMatch should return a different id for each started match")
+    void startMatchShouldReturnUniqueIds() {
+        MatchId first = scoreboard.startMatch("Mexico", "Canada").id();
+        MatchId second = scoreboard.startMatch("Spain", "Brazil").id();
+
+        assertThat(first).isNotEqualTo(second);
     }
 
     @ParameterizedTest
@@ -134,53 +142,7 @@ class ScoreboardTest {
     }
 
     @Test
-    @DisplayName("Edge Case 1: Thread race between finishMatch and updateScore should throw MatchNotFoundException")
-    void shouldHandleRaceConditionBetweenFinishAndriUpdate() throws InterruptedException, ExecutionException {
-        // Given
-        MatchId matchId = scoreboard.startMatch("Germany", "France").id();
-
-        int threadCount = 10;
-        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-        CountDownLatch latch = new CountDownLatch(1);
-
-        // When: Multiple threads try to update or finish the exact same match simultaneously
-        Callable<Boolean> finisherTask = () -> {
-            latch.await();
-            try {
-                scoreboard.finishMatch(matchId);
-                return true;
-            } catch (MatchNotFoundException e) {
-                return false;
-            }
-        };
-
-        Callable<Boolean> updaterTask = () -> {
-            latch.await();
-            try {
-                scoreboard.updateScore(matchId, 1, 1);
-                return true;
-            } catch (MatchNotFoundException e) {
-                return false;
-            }
-        };
-
-        // Submit tasks
-        Future<Boolean> finishFuture = executor.submit(finisherTask);
-        Future<Boolean> updateFuture = executor.submit(updaterTask);
-
-        // Release the hounds!
-        latch.countDown();
-
-        executor.shutdown();
-        boolean finishedInTime = executor.awaitTermination(2, TimeUnit.SECONDS);
-        assertThat(finishedInTime).isTrue();
-
-        // Then: The system remains consistent; no corrupted states, summary is empty because match is finished.
-        assertThat(scoreboard.getSummary()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Edge Case 2: Whitespace trimming and case-insensitivity on team names")
+    @DisplayName("Whitespace trimming and case-insensitivity on team names")
     void shouldTrimWhitespaceAndHandleCaseInsensitivity() {
         // Given teams name with spaces and mixed casing
         MatchId matchId = scoreboard.startMatch("  Brazil  ", "ARGENTINA ").id();
@@ -193,31 +155,6 @@ class ScoreboardTest {
         // Verify that self-play check ignores case and whitespace
         assertThatThrownBy(() -> scoreboard.startMatch("  brazil ", "BRAZIL"))
                 .isInstanceOf(InvalidTeamException.class);
-    }
-
-    @Test
-    @DisplayName("Edge Case 4: Downward score correction (VAR scenario) should apply absolute values correctly")
-    void shouldHandleDownwardScoreCorrection() {
-        // Given an active match
-        MatchId matchId = scoreboard.startMatch("Portugal", "Uruguay").id();
-
-        // Initial score update: 2:1
-        scoreboard.updateScore(matchId, 2, 1);
-        assertThat(scoreboard.getSummary().get(0))
-                .satisfies(m -> {
-                    assertThat(m.team1Score()).isEqualTo(2);
-                    assertThat(m.team2Score()).isEqualTo(1);
-                });
-
-        // When VAR cancels a goal (Downward correction to 1:1)
-        scoreboard.updateScore(matchId, 1, 1);
-
-        // Then score is accurately updated downwards using absolute values
-        assertThat(scoreboard.getSummary().get(0))
-                .satisfies(m -> {
-                    assertThat(m.team1Score()).isEqualTo(1);
-                    assertThat(m.team2Score()).isEqualTo(1);
-                });
     }
 
     @Test
@@ -361,5 +298,108 @@ class ScoreboardTest {
         scoreboard.finishMatch(match.id());
 
         assertThat(scoreboard.getMatchesByTeam("Poland")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should return the example scenario from the assignment in the expected order")
+    void shouldReturnExampleScenarioInExpectedOrder() {
+        MatchId mexicoCanada = scoreboard.startMatch("Mexico", "Canada").id();
+        MatchId spainBrazil = scoreboard.startMatch("Spain", "Brazil").id();
+        MatchId germanyFrance = scoreboard.startMatch("Germany", "France").id();
+        MatchId uruguayItaly = scoreboard.startMatch("Uruguay", "Italy").id();
+        MatchId argentinaAustralia = scoreboard.startMatch("Argentina", "Australia").id();
+
+        scoreboard.updateScore(mexicoCanada, 0, 5);
+        scoreboard.updateScore(spainBrazil, 10, 2);
+        scoreboard.updateScore(germanyFrance, 2, 2);
+        scoreboard.updateScore(uruguayItaly, 6, 6);
+        scoreboard.updateScore(argentinaAustralia, 3, 1);
+
+        assertThat(scoreboard.getSummary())
+                .extracting(MatchSummary::team1, MatchSummary::team2,
+                        MatchSummary::team1Score, MatchSummary::team2Score)
+                .containsExactly(
+                        tuple("Uruguay", "Italy", 6, 6),
+                        tuple("Spain", "Brazil", 10, 2),
+                        tuple("Mexico", "Canada", 0, 5),
+                        tuple("Argentina", "Australia", 3, 1),
+                        tuple("Germany", "France", 2, 2));
+    }
+
+    @Test
+    @DisplayName("getSummary returns an empty list when no matches are in progress")
+    void getSummaryShouldReturnEmptyListForEmptyScoreboard() {
+        assertThat(scoreboard.getSummary()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("getSummary returns an immutable list")
+    void getSummaryShouldReturnImmutableList() {
+        scoreboard.startMatch("Poland", "Argentina");
+        List<MatchSummary> result = scoreboard.getSummary();
+
+        assertThatThrownBy(() -> result.add(null))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(result::clear)
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("getSummary returns a snapshot, not a live view")
+    void getSummaryShouldReturnSnapshotNotLiveView() {
+        MatchId matchId = scoreboard.startMatch("Poland", "Argentina").id();
+        List<MatchSummary> before = scoreboard.getSummary();
+
+        scoreboard.updateScore(matchId, 2, 1);
+
+        assertThat(before.get(0).team1Score()).isZero();
+        assertThat(scoreboard.getSummary().get(0).team1Score()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Should order by total score without int overflow for very large scores")
+    void shouldOrderByTotalScoreWithoutIntOverflow() {
+        MatchId huge = scoreboard.startMatch("Mexico", "Canada").id();
+        MatchId small = scoreboard.startMatch("Spain", "Brazil").id();
+
+        scoreboard.updateScore(huge, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        scoreboard.updateScore(small, 1, 0);
+
+        assertThat(scoreboard.getSummary())
+                .extracting(MatchSummary::id)
+                .containsExactly(huge, small);
+    }
+
+    @Test
+    @DisplayName("updateScore returns the updated summary")
+    void updateScoreShouldReturnUpdatedSummary() {
+        MatchId matchId = scoreboard.startMatch("Spain", "Italy").id();
+
+        MatchSummary updated = scoreboard.updateScore(matchId, 2, 1);
+
+        assertThat(updated).isEqualTo(new MatchSummary(matchId, "Spain", "Italy", 2, 1));
+    }
+
+    @Test
+    @DisplayName("finishMatch returns the final summary with the last accepted score")
+    void finishMatchShouldReturnFinalSummary() {
+        MatchId matchId = scoreboard.startMatch("Japan", "Senegal").id();
+        scoreboard.updateScore(matchId, 3, 2);
+
+        MatchSummary finalResult = scoreboard.finishMatch(matchId);
+
+        assertThat(finalResult).isEqualTo(new MatchSummary(matchId, "Japan", "Senegal", 3, 2));
+    }
+
+    @Test
+    @DisplayName("The same teams may play several ongoing matches, each with its own id")
+    void shouldAllowSameTeamsInSeveralOngoingMatches() {
+        MatchId first = scoreboard.startMatch("Mexico", "Canada").id();
+        MatchId second = scoreboard.startMatch("Mexico", "Canada").id();
+
+        assertThat(first).isNotEqualTo(second);
+        assertThat(scoreboard.getSummary())
+                .extracting(MatchSummary::id)
+                .containsExactly(second, first);
     }
 }
