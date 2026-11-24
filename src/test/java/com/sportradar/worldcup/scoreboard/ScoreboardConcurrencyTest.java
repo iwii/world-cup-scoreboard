@@ -333,4 +333,69 @@ class ScoreboardConcurrencyTest {
         assertTrue(finalSnapshot.stream().allMatch(m -> m.team1Score() == 500 && m.team2Score() == 500));
         assertEquals(ids.reversed(), finalSnapshot.stream().map(MatchSummary::id).toList());
     }
+
+    @Test
+    void matchesByTeamReadDuringConcurrentUpdatesIsAlwaysConsistent() throws Exception {
+        List<MatchId> ids = IntStream.range(0, THREADS)
+                .mapToObj(i -> scoreboard.startMatch("Followed", "Opponent" + i).id())
+                .toList();
+
+        Map<MatchId, Integer> startIndex = IntStream.range(0, THREADS)
+                .boxed()
+                .collect(Collectors.toMap(ids::get, i -> i));
+
+        CountDownLatch writersDone = new CountDownLatch(THREADS);
+        CountDownLatch readersStarted = new CountDownLatch(READERS);
+        CountDownLatch writingStarted = new CountDownLatch(1);
+        AtomicInteger snapshotsTakenWhileWriting = new AtomicInteger();
+
+        List<Callable<Void>> writeTasks = IntStream.range(0, THREADS)
+                .<Callable<Void>>mapToObj(index -> () -> {
+                    try {
+                        assertTrue(readersStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                                "Readers did not start");
+                        for (int score = 1; score <= 500; score++) {
+                            scoreboard.updateScore(ids.get(index), score, score);
+                            writingStarted.countDown();
+                        }
+                        return null;
+                    } finally {
+                        writersDone.countDown();
+                    }
+                })
+                .toList();
+
+        List<Callable<Void>> readTasks = IntStream.range(0, READERS)
+                .<Callable<Void>>mapToObj(index -> () -> {
+                    boolean firstSnapshot = true;
+                    do {
+                        boolean writingHadStarted = writingStarted.getCount() == 0;
+                        List<MatchSummary> snapshot = scoreboard.getMatchesByTeam(" followed ");
+                        boolean writersStillRunning = writersDone.getCount() > 0;
+
+                        assertEquals(THREADS, snapshot.size());
+                        assertConsistentSnapshot(snapshot, startIndex);
+                        assertTrue(snapshot.stream().allMatch(m -> m.team1Score() == m.team2Score()),
+                                "A match snapshot mixed scores from separate updates");
+
+                        if (writingHadStarted && writersStillRunning) {
+                            snapshotsTakenWhileWriting.incrementAndGet();
+                        }
+                        if (firstSnapshot) {
+                            readersStarted.countDown();
+                            firstSnapshot = false;
+                        }
+                    } while (writersDone.getCount() > 0);
+                    return null;
+                })
+                .toList();
+
+        List<Callable<Void>> tasks = Stream.concat(writeTasks.stream(), readTasks.stream()).toList();
+        assertNoErrors(runAtOnce(tasks));
+
+        assertTrue(snapshotsTakenWhileWriting.get() > 0, "readers never overlapped with writers");
+        List<MatchSummary> finalSnapshot = scoreboard.getMatchesByTeam("Followed");
+        assertConsistentSnapshot(finalSnapshot, startIndex);
+        assertTrue(finalSnapshot.stream().allMatch(m -> m.team1Score() == 500 && m.team2Score() == 500));
+    }
 }

@@ -214,7 +214,7 @@ Errors are unchecked exceptions deriving from `ScoreboardException`: `MatchNotFo
 
 **Rejected:** exposing `Match` objects, returning `void` or missing values to signal errors, and a custom exception for every null input.
 
-**Status: [ADOPTED, with changes].** All lifecycle operations return `MatchSummary`. Null arguments are rejected with `NullPointerException` (`Objects.requireNonNull`), not `IllegalArgumentException`; null team names throw `InvalidTeamException` (see 2.3.4 discussion).
+**Status: [ADOPTED, with changes].** All lifecycle operations return `MatchSummary`. Null arguments are rejected with `NullPointerException` (`Objects.requireNonNull`), not `IllegalArgumentException`; blank team names throw `InvalidTeamException` (see 2.3.4 discussion).
 
 #### 2.3.5 Concurrency, Summary Ordering and Performance
 
@@ -441,7 +441,7 @@ For each scenario, describe the expected result and recommend a testing approach
 - **Excluding `Scoreboard` from JaCoCo:** would hide real coverage of `updateScore`/`finishMatch`; not worth it for a single defensive branch.
 - **Mocking `MatchId.random()`:** would require Mockito (new dependency) and would not test the real `startMatch` method.
 
-**Status: [ADOPTED, with changes].** The `assertj-core` bump and the null `MatchId` tests were adopted unchanged. The testability refactor (`getMatchContext` / `removeMatchContext` and the anonymous `Scoreboard` subclass) was **[SUPERSEDED by 2.6]**: the helpers were removed from `Scoreboard`, so the production code has no test-only seams. `ScoreboardRaceConditionTest` now forces the race window deterministically instead: the test holds the match lock, a worker thread starts `updateScore` / `finishMatch` and blocks on that lock, and once the worker is queued the test removes the entry from the registry and releases the lock. The test uses reflection only to reach the private `matches` map at that moment. This differs from the rejected first attempt, which removed the entry before the call, and the assertion on the "already finished" message proves that the defensive branch fired.
+**Status: [ADOPTED, with changes].** The `assertj-core` bump and the null `MatchId` tests were adopted unchanged. The testability refactor (`getMatchContext` / `removeMatchContext` and the anonymous `Scoreboard` subclass) was **[SUPERSEDED by 2.6]**: the helpers were removed from `Scoreboard`, so the production code has no test-only seams. A subsequent `MatchStatus` lifecycle change replaced the identity check in `updateScore` with an in-progress status check under the match lock; this also handles operations that were waiting when `finishMatch` marked the match finished. The reflection-based registry manipulation was removed, and update/finish race outcomes are exercised through the public API in `ScoreboardConcurrencyTest`.
 
 Results are verified with `mvn clean verify`.
 
@@ -598,3 +598,11 @@ Verification:
 - Verified with `mvn clean verify`: all tests pass, JaCoCo ≥ 80%.
 - `jar --describe-module` for the module name.
 - `mvn dependency:tree | grep assertj` shows `assertj-core:3.27.7:test`.
+
+### 3.2 Review Follow-up (2026-11-24)
+
+**Prompt:** Review concurrency, thread safety, Java Memory Model, API design and test coverage without modifying files.
+
+**Outcome:** No production-code race or Java Memory Model defect was identified. The review found that concurrent query behavior for `getMatchesByTeam` was not covered and that the README incorrectly described the null-team exception.
+
+**Applied:** Updated the README to state that null team names throw `NullPointerException`, while blank names throw `InvalidTeamException`, matching `Objects.requireNonNull` and existing tests. Clarified that both query methods return per-match consistent but non-atomic snapshots. Added a concurrency test for `getMatchesByTeam` during concurrent score updates; it checks result membership, ordering, and per-match score consistency.

@@ -105,11 +105,11 @@ scoreboard.updateScore(id, 1, 0);
 ## 5. Design decisions
 
 - **API:** `startMatch`, `updateScore` and `finishMatch` return an immutable `MatchSummary`; `getSummary` returns an immutable list of per-match snapshots rather than a live view. Each match snapshot is internally consistent, but the summary is not a globally atomic snapshot: different matches may be read at different points in time.
-- **Domain model:** `Scoreboard`, a package-private mutable `MatchContext` guarded by a per-match `ReentrantLock`, the immutable records `MatchId` and `MatchSummary`. Team names are validated `String`s. No third-party runtime dependencies.
-- **Storage:** `ConcurrentHashMap<MatchId, MatchContext>`. The map holds only ongoing matches; `finishMatch` removes the entry atomically via `remove(id, context)`.
+- **Domain model:** `Scoreboard`, a package-private mutable `MatchContext` guarded by a per-match `ReentrantLock` and tracking lifecycle with `MatchStatus`, plus the immutable records `MatchId` and `MatchSummary`. Team names are validated `String`s. No third-party runtime dependencies.
+- **Storage:** `ConcurrentHashMap<MatchId, MatchContext>`. The map holds only ongoing matches; `finishMatch` marks the match `FINISHED` under its lock, then removes that context from the map.
 - **Ordering:** individual scores are `int`; the total used for ordering is `long` to avoid overflow. Ties are broken by a monotonic `long` sequence assigned in `startMatch` and stored only in `MatchContext` (never exposed).
-- **Concurrency:** a per-match `ReentrantLock` serializes `updateScore` and `finishMatch` on the same match; different matches proceed concurrently. Method  `getSummary` snapshots each match under its lock, so it is not a globally atomic snapshot (see Trade-offs).
-- **Errors:** unchecked exceptions deriving from `ScoreboardException` - `MatchNotFoundException`, `InvalidTeamException`, `InvalidScoreException`, `InvalidMatchIdException`. `Objects.requireNonNull` is used for null `MatchId` arguments. Null or blank team names throw `InvalidTeamException`.
+- **Concurrency:** a per-match `ReentrantLock` serializes `updateScore` and `finishMatch` on the same match; different matches proceed concurrently. `getSummary` and `getMatchesByTeam` snapshot each match under its lock, so neither is a globally atomic snapshot (see Trade-offs).
+- **Errors:** unchecked exceptions deriving from `ScoreboardException` - `MatchNotFoundException`, `InvalidTeamException`, `InvalidScoreException`, `InvalidMatchIdException`. `Objects.requireNonNull` is used for null `MatchId` arguments and null team names, so those throw `NullPointerException`; blank team names throw `InvalidTeamException`.
 
 ## 6. Build decisions
 
@@ -141,16 +141,15 @@ scoreboard.updateScore(id, 1, 0);
 - `ConcurrentHashMap` with on-demand sorting: lookups, insertions and removals stay O(1) on average, the same as with `HashMap`, and operations on different matches do not block each other. The cost is a small constant overhead and weakly consistent iteration, and each summary still requires sorting (O(n log n)).
 - Mutable `MatchContext` under a per-match lock, exposed only via immutable `MatchSummary` snapshots: 
   avoids allocating a new domain object on every update, at the cost of a small amount of locking code inside `MatchContext`. 
-- Per-match locks: allow concurrent operations on different matches, but `getSummary` is not a globally atomic snapshot 
-  and requires locking each context during snapshot.
-- Finished matches are removed from the scoreboard: no memory growth and a simpler model (no lifecycle states), but 
-  an unknown match ID cannot be told apart from an already finished one, and corrections after the final whistle are not possible.
+- Per-match locks: allow concurrent operations on different matches, but `getSummary` and `getMatchesByTeam` are not globally atomic snapshots
+  and require locking each context during snapshot.
+- Finished matches are marked `FINISHED` and removed from the scoreboard: no memory growth, while the lifecycle state prevents a late update that was waiting for the match lock; after removal an unknown ID cannot be told apart from an already finished one, and corrections after the final whistle are not possible.
 - A team may play several ongoing matches at once: the assignment does not forbid it and it keeps validation simple, 
   but it does not reflect real-world rules.
 - `getSummary` returns an immutable snapshot rather than a live view: callers get a consistent picture at the moment of the call, 
   but must call it again to see later changes.
 - `startMatch` has one defensive branch for a `UUID.randomUUID()` collision inside the `putIfAbsent` retry loop. The probability of a collision is negligible (~2^-122), so the branch is intentionally left without a test. Mocking `MatchId.random()` or excluding `Scoreboard` from JaCoCo would hide real coverage of the other methods, which is worse than a single uncovered defensive branch.
-- `ScoreboardRaceConditionTest` uses reflection to reach the internal `matches` registry and force the "removed while waiting for the lock" race window deterministically. It is the only test coupled to a private field name; renaming the field requires updating this test.
+- `ScoreboardConcurrencyTest` verifies update/finish race outcomes through the public API; match lifecycle checks use `MatchStatus` under the per-match lock without exposing the internal registry.
 
 ## 9. AI usage
 

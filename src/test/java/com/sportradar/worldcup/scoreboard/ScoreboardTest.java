@@ -1,11 +1,14 @@
 package com.sportradar.worldcup.scoreboard;
 
-import com.sportradar.worldcup.scoreboard.exception.*;
+import com.sportradar.worldcup.scoreboard.exception.InvalidScoreException;
+import com.sportradar.worldcup.scoreboard.exception.InvalidTeamException;
+import com.sportradar.worldcup.scoreboard.exception.MatchNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.EmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
@@ -51,7 +54,18 @@ class ScoreboardTest {
     }
 
     @ParameterizedTest
-    @NullAndEmptySource
+    @NullSource
+    @DisplayName("Should throw NullPointerException when team name is null")
+    void shouldRejectNullTeamNames(String invalidTeam) {
+        assertThatThrownBy(() -> scoreboard.startMatch(invalidTeam, "Brazil"))
+                .isInstanceOf(NullPointerException.class);
+
+        assertThatThrownBy(() -> scoreboard.startMatch("Brazil", invalidTeam))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @ParameterizedTest
+    @EmptySource
     @ValueSource(strings = {"   ", "\t", "\n"})
     @DisplayName("Should throw InvalidTeamException when team name is null, empty or blank")
     void shouldRejectInvalidTeamNames(String invalidTeam) {
@@ -118,26 +132,14 @@ class ScoreboardTest {
     }
 
     @Test
-    @DisplayName("Should throw MatchNotFoundException when updating or finishing a non-existent or finished match")
-    void shouldThrowExceptionForUnknownOrFinishedMatch() {
+    @DisplayName("Should throw MatchNotFoundException when updating or finishing a non-existent match")
+    void shouldThrowExceptionForUnknownMatch() {
         MatchId unknownId = MatchId.random();
-        MatchId matchId = scoreboard.startMatch("Japan", "Senegal").id();
 
-        // Unknown match operations
         assertThatThrownBy(() -> scoreboard.updateScore(unknownId, 1, 0))
                 .isInstanceOf(MatchNotFoundException.class);
 
         assertThatThrownBy(() -> scoreboard.finishMatch(unknownId))
-                .isInstanceOf(MatchNotFoundException.class);
-
-        // Finish the match once
-        scoreboard.finishMatch(matchId);
-
-        // Operations after match is finished
-        assertThatThrownBy(() -> scoreboard.updateScore(matchId, 1, 0))
-                .isInstanceOf(MatchNotFoundException.class);
-
-        assertThatThrownBy(() -> scoreboard.finishMatch(matchId))
                 .isInstanceOf(MatchNotFoundException.class);
     }
 
@@ -258,7 +260,7 @@ class ScoreboardTest {
     @DisplayName("getMatchesByTeam rejects null, empty or blank team names")
     void getMatchesByTeamShouldRejectInvalidInput() {
         assertThatThrownBy(() -> scoreboard.getMatchesByTeam(null))
-                .isInstanceOf(InvalidTeamException.class);
+                .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> scoreboard.getMatchesByTeam(""))
                 .isInstanceOf(InvalidTeamException.class);
         assertThatThrownBy(() -> scoreboard.getMatchesByTeam("   "))

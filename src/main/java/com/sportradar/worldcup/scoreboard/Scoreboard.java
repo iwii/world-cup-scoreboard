@@ -1,10 +1,13 @@
 package com.sportradar.worldcup.scoreboard;
 
-import com.sportradar.worldcup.scoreboard.exception.*;
+import com.sportradar.worldcup.scoreboard.exception.InvalidScoreException;
+import com.sportradar.worldcup.scoreboard.exception.InvalidTeamException;
+import com.sportradar.worldcup.scoreboard.exception.MatchNotFoundException;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,24 +42,23 @@ public final class Scoreboard {
     private final AtomicLong sequenceGenerator = new AtomicLong(0);
 
     /**
-     * Starts a new match with initial score 0-0 after validating and trimming team names.
+     * Starts a new match with initial score 0-0 after validating and normalizing team names.
      */
     public MatchSummary startMatch(String team1, String team2) {
-        String trimmed1 = validateTeamName(team1);
-        String trimmed2 = validateTeamName(team2);
+        String normalized1 = MatchSummary.normalizeTeamName(team1, "team1");
+        String normalized2 = MatchSummary.normalizeTeamName(team2, "team2");
 
-        if (trimmed1.equalsIgnoreCase(trimmed2)) {
-            throw new InvalidTeamException("A team cannot play against itself: " + trimmed1);
+        if (normalized1.equalsIgnoreCase(normalized2)) {
+            throw new InvalidTeamException("A team cannot play against itself: " + normalized1);
         }
 
-        // sequence is consumed even if putIfAbsent collides; monotonicity is preserved
-        // and a UUID collision is astronomically unlikely (~2^-122).
         long sequence = sequenceGenerator.incrementAndGet();
         MatchId matchId;
         MatchContext context;
         do {
             matchId = MatchId.random();
-            context = new MatchContext(matchId, trimmed1, trimmed2, sequence);
+            context = new MatchContext(
+                    matchId, normalized1, normalized2, sequence, MatchStatus.IN_PROGRESS);
         } while (matches.putIfAbsent(matchId, context) != null);
         return context.toSummary();
     }
@@ -76,13 +78,12 @@ public final class Scoreboard {
 
         context.lock.lock();
         try {
-            // Strict identity check: ensure the map still references this exact MatchContext instance.
-            // Protects against a race condition where the match was removed while waiting for the lock.
-            if (matches.get(matchId) != context) {
-                throw new MatchNotFoundException("Match not found or already finished with ID: " + matchId);
+            if (!context.isInProgressUnderLocked()) {
+                throw new MatchNotFoundException(
+                        "Match not found or already finished with ID: " + matchId);
             }
             context.updateScores(team1Score, team2Score);
-            return context.toSummary();
+            return context.summaryUnderLock();
         } finally {
             context.lock.unlock();
         }
@@ -93,7 +94,6 @@ public final class Scoreboard {
      */
     public MatchSummary finishMatch(MatchId matchId) {
         Objects.requireNonNull(matchId, "matchId");
-
         MatchContext context = matches.get(matchId);
         if (context == null) {
             throw new MatchNotFoundException("Match not found with ID: " + matchId);
@@ -101,11 +101,13 @@ public final class Scoreboard {
 
         context.lock.lock();
         try {
-            // Atomic conditional removal: removes the entry only if it is still mapped to this specific context.
-            if (!matches.remove(matchId, context)) {
-                throw new MatchNotFoundException("Match not found or already finished with ID: " + matchId);
+            if (!context.isInProgressUnderLocked()) {
+                throw new MatchNotFoundException(
+                        "Match not found or already finished with ID: " + matchId);
             }
-            return context.toSummary();
+            context.markFinishedUnderLock();
+            matches.remove(matchId, context);
+            return context.summaryUnderLock();
         } finally {
             context.lock.unlock();
         }
@@ -117,28 +119,22 @@ public final class Scoreboard {
      */
     public List<MatchSummary> getSummary() {
         return matches.values().stream()
-                .map(MatchContext::toSnapshot)
+                .map(MatchContext::toSnapshotIfActive)
+                .flatMap(Optional::stream)
                 .sorted(SNAPSHOT_ORDER)
                 .map(MatchContext.Snapshot::summary)
                 .toList();
     }
 
     /**
-     * Returns the matches in progress in which the given team plays, either as team1 or team2.
-     * The team name is trimmed and compared ignoring case, like in {@link #startMatch(String, String)}.
-     * The result has the same ordering as {@link #getSummary()} (total score descending, then most
-     * recently started first) and is an immutable list; it is empty when the team has no ongoing matches.
-     * Each match is read consistently, but the list is not an atomic snapshot of the whole scoreboard.
-     *
-     * @param team name of the team to look for
-     * @return immutable list of matching match summaries, possibly empty
-     * @throws InvalidTeamException if the team name is null, empty or blank
+     * Returns the matches in progress in which the given team plays.
      */
     public List<MatchSummary> getMatchesByTeam(String team) {
-        String normalized = validateTeamName(team);
+        String normalized = MatchSummary.normalizeTeamName(team, "team");
         return matches.values().stream()
                 .filter(context -> involves(context, normalized))
-                .map(MatchContext::toSnapshot)
+                .map(MatchContext::toSnapshotIfActive)
+                .flatMap(Optional::stream)
                 .sorted(SNAPSHOT_ORDER)
                 .map(MatchContext.Snapshot::summary)
                 .toList();
@@ -147,13 +143,6 @@ public final class Scoreboard {
     // Team names are final, so they can be read without the match lock; unrelated matches are never locked
     private static boolean involves(MatchContext context, String team) {
         return context.team1.equalsIgnoreCase(team) || context.team2.equalsIgnoreCase(team);
-    }
-
-    private static String validateTeamName(String teamName) {
-        if (teamName == null || teamName.trim().isEmpty()) {
-            throw new InvalidTeamException("Team name cannot be null, empty or blank");
-        }
-        return teamName.trim();
     }
 
     private static void validateScore(int score) {

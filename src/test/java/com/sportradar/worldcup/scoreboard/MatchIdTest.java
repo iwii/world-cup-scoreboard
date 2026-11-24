@@ -29,6 +29,13 @@ class MatchIdTest {
     }
 
     @Test
+    @DisplayName("constructor should reject a null UUID")
+    void constructorShouldRejectNullUuid() {
+        assertThatThrownBy(() -> new MatchId(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     @DisplayName("fromString should wrap malformed UUID in InvalidMatchIdException")
     void shouldWrapMalformedUuid() {
         assertThatThrownBy(() -> MatchId.fromString("not-a-uuid"))
