@@ -4,6 +4,7 @@ import com.sportradar.worldcup.scoreboard.exception.MatchNotFoundException;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.DisplayName;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -113,6 +114,7 @@ class ScoreboardConcurrencyTest {
     // ---------- tests ----------
 
     @Test
+    @DisplayName("Simultaneous starts of the same teams receive unique IDs")
     void simultaneousStartsOfTheSameTeamsGetUniqueIds() throws Exception {
         List<Callable<MatchSummary>> tasks = new ArrayList<>();
         for (int i = 0; i < THREADS; i++) {
@@ -128,6 +130,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Simultaneous starts of different teams are all registered")
     void simultaneousStartsOfDifferentTeamsAreAllRegistered() throws Exception {
         List<Callable<MatchSummary>> tasks = new ArrayList<>();
         for (int i = 0; i < THREADS; i++) {
@@ -144,6 +147,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Concurrent updates to different matches are all applied")
     void concurrentUpdatesOfDifferentMatchesAreAllApplied() throws Exception {
         List<MatchId> ids = IntStream.range(0, THREADS)
                 .mapToObj(i -> scoreboard.startMatch("Home" + i, "Away" + i).id())
@@ -171,6 +175,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Concurrent updates to one match never mix scores from separate updates")
     void concurrentUpdatesOfOneMatchNeverMixTwoUpdates() throws Exception {
         MatchSummary match = scoreboard.startMatch("Mexico", "Canada");
 
@@ -196,6 +201,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Concurrent attempts to finish one match succeed exactly once")
     void concurrentFinishOfTheSameMatchSucceedsExactlyOnce() throws Exception {
         MatchSummary match = scoreboard.startMatch("Mexico", "Canada");
 
@@ -217,6 +223,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Concurrent finishes of different matches all succeed")
     void concurrentFinishOfDifferentMatchesAllSucceed() throws Exception {
         List<MatchId> ids = IntStream.range(0, THREADS)
                 .mapToObj(i -> scoreboard.startMatch("Home" + i, "Away" + i).id())
@@ -233,6 +240,7 @@ class ScoreboardConcurrencyTest {
         assertTrue(scoreboard.getSummary().isEmpty());
     }
     @RepeatedTest(100)
+    @DisplayName("An update racing with finish has only valid outcomes")
     void updateRacingWithFinishHasOnlyTwoValidOutcomes() throws Exception {
         Scoreboard scoreboard = new Scoreboard();
         MatchSummary match = scoreboard.startMatch("Mexico", "Canada");
@@ -261,6 +269,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Summary reads stay consistent during concurrent updates")
     void summaryReadDuringConcurrentUpdatesIsAlwaysConsistent() throws Exception {
         List<MatchId> ids = IntStream.range(0, THREADS)
                 .mapToObj(i -> scoreboard.startMatch("Home" + i, "Away" + i).id())
@@ -335,6 +344,7 @@ class ScoreboardConcurrencyTest {
     }
 
     @Test
+    @DisplayName("Team match reads stay consistent during concurrent updates")
     void matchesByTeamReadDuringConcurrentUpdatesIsAlwaysConsistent() throws Exception {
         List<MatchId> ids = IntStream.range(0, THREADS)
                 .mapToObj(i -> scoreboard.startMatch("Followed", "Opponent" + i).id())

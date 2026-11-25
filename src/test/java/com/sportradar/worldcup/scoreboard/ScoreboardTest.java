@@ -11,7 +11,9 @@ import org.junit.jupiter.params.provider.EmptySource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.lang.reflect.Field;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -84,6 +86,34 @@ class ScoreboardTest {
 
         assertThatThrownBy(() -> scoreboard.startMatch("  France ", "france"))
                 .isInstanceOf(InvalidTeamException.class);
+    }
+
+    @Test
+    @DisplayName("Start match retries when putIfAbsent reports an ID collision")
+    void startMatchRetriesIdCollision() throws Exception {
+        Field matchesField = Scoreboard.class.getDeclaredField("matches");
+        matchesField.setAccessible(true);
+
+        MatchContext collision = new MatchContext(
+                MatchId.fromString("00000000-0000-0000-0000-000000000001"),
+                "Existing", "Match", 0, MatchStatus.IN_PROGRESS);
+        int[] attempts = {0};
+        ConcurrentHashMap<MatchId, MatchContext> matches = new ConcurrentHashMap<>() {
+            @Override
+            public MatchContext putIfAbsent(MatchId id, MatchContext context) {
+                if (attempts[0]++ == 0) {
+                    return collision;
+                }
+                return super.putIfAbsent(id, context);
+            }
+        };
+        matchesField.set(scoreboard, matches);
+
+        MatchSummary started = scoreboard.startMatch("Brazil", "Croatia");
+
+        assertThat(attempts[0]).isEqualTo(2);
+        assertThat(matches).containsKey(started.id());
+        assertThat(scoreboard.getSummary()).containsExactly(started);
     }
 
     @Test
